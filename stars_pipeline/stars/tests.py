@@ -491,8 +491,9 @@ def test_outlier_rate(
 
     Returns:
         (outlier_rate, flag) where flag=True if rate >= cfg.outlier_rate_threshold.
-        Returns (nan, False) if series has fewer than 3 observations, or if
-        MAD is zero (flat series — no outliers possible).
+        Returns (nan, False) if series has fewer than 3 observations.
+        When MAD is zero (flat majority), any value deviating from the
+        median is counted as an outlier (series != median mask).
     """
     if len(series) < 3:
         return (float("nan"), False)
