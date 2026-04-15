@@ -51,7 +51,7 @@ def test_run_monitoring_output_has_expected_columns():
     result = run_monitoring(df, _make_run_cfg(), MonitorConfig())
     expected = {
         "strata_id", "entity_id", "patient_type_rollup", "service_line",
-        "feature_segment",
+        "feature_segment", "mesh",
         "ks_distribution_value", "ks_distribution_flag",
         "level_shift_value", "level_shift_flag",
         "dw_shift_value", "dw_shift_flag",
@@ -97,3 +97,13 @@ def test_multiple_segments_produce_multiple_rows():
     df = pd.concat([df1, df2], ignore_index=True)
     result = run_monitoring(df, _make_run_cfg(), MonitorConfig())
     assert len(result) == 2
+
+
+def test_train_days_caps_training_window():
+    # With train_days=180 and recent_days=90, run_monitoring should complete
+    # without error and still produce one row per segment.
+    df = _make_df(n_days=500)
+    run_cfg = _make_run_cfg(recent_days=90, train_days=180)
+    result = run_monitoring(df, run_cfg, MonitorConfig())
+    assert len(result) == 1
+    assert "ks_distribution_value" in result.columns

@@ -208,9 +208,16 @@ def apply_thresholds(stats_df: pd.DataFrame) -> pd.DataFrame:
     """
     df = stats_df.copy()
 
-    # Cast flag columns to bool, treating NaN as False
     def _any_flags(cols: list[str]) -> pd.Series:
+        missing = [c for c in cols if c not in df.columns]
+        if missing:
+            logger.warning(
+                "Expected flag columns missing from stats_df",
+                extra={"missing_columns": missing},
+            )
         present = [c for c in cols if c in df.columns]
+        if not present:
+            return pd.Series(False, index=df.index)
         return df[present].fillna(False).astype(bool).any(axis=1)
 
     stability_violated    = _any_flags(_STABILITY_FLAGS)
@@ -223,19 +230,14 @@ def apply_thresholds(stats_df: pd.DataFrame) -> pd.DataFrame:
         abundance_violated | regularity_violated
     )
 
-    def _first_violated(row: pd.Series) -> str | None:
-        if row["_stab"]:   return "Stability"
-        if row["_truth"]:  return "Truthfulness"
-        if row["_abund"]:  return "Abundance"
-        if row["_reg"]:    return "Regularity"
-        return None
-
-    df["_stab"]  = stability_violated
-    df["_truth"] = truthfulness_violated
-    df["_abund"] = abundance_violated
-    df["_reg"]   = regularity_violated
-
-    df["stars_family_violated"] = df.apply(_first_violated, axis=1)
-    df = df.drop(columns=["_stab", "_truth", "_abund", "_reg"])
+    df["stars_family_violated"] = pd.Series(
+        np.select(
+            [stability_violated, truthfulness_violated, abundance_violated, regularity_violated],
+            ["Stability", "Truthfulness", "Abundance", "Regularity"],
+            default=None,
+        ),
+        index=df.index,
+        dtype=object,
+    )
 
     return df
