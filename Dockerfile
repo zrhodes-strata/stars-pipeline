@@ -8,7 +8,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Install the package in editable mode
 COPY . .
-RUN pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir --no-deps -e .
 
 # Disable Python output buffering so logs reach CloudWatch in real time
 ENV PYTHONUNBUFFERED=1
