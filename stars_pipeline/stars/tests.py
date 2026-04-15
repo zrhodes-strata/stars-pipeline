@@ -299,3 +299,121 @@ def test_trend_significance(
     result = linregress(np.arange(len(recent), dtype=float), recent)
     p_value = float(result.pvalue)
     return (p_value, bool(p_value < cfg.trend_p_value_threshold))
+
+
+# ── Truthfulness ──────────────────────────────────────────────────────────────
+
+
+def test_coverage_shift(
+    train_present: np.ndarray,
+    recent_present: np.ndarray,
+    cfg: MonitorConfig,
+) -> tuple[float, bool]:
+    """
+    Detect a significant shift in data coverage (proportion of observed days).
+
+    STARS Family:       Truthfulness
+    Broken Assumption:  Not Truthful — missing data pattern has changed,
+                        suggesting the data no longer accurately represents
+                        the underlying process
+    Method:             Two-proportion z-test on non-missing day rates
+    Threshold:          cfg.coverage_delta_threshold (default 0.30)
+                        and cfg.alpha (default 0.05) for statistical gate
+
+    Coverage rate = non-missing_days / total_days in the window.
+    Both statistical significance (z-test p < alpha) and practical magnitude
+    (|delta| >= coverage_delta_threshold) must be met to flag.
+
+    Args:
+        train_present:  Boolean array; True = day had an observed value in train.
+        recent_present: Boolean array; True = day had an observed value in recent.
+        cfg:            MonitorConfig with hard-coded thresholds.
+
+    Returns:
+        (coverage_delta, flag) where coverage_delta = |rate_recent - rate_train|.
+        Returns (nan, False) if either array is empty.
+    """
+    if len(train_present) == 0 or len(recent_present) == 0:
+        return (float("nan"), False)
+    cov_train = float(train_present.sum()) / len(train_present)
+    cov_recent = float(recent_present.sum()) / len(recent_present)
+    delta = abs(cov_recent - cov_train)
+    count = np.array([int(train_present.sum()), int(recent_present.sum())])
+    nobs = np.array([len(train_present), len(recent_present)])
+    _, p_value = proportions_ztest(count, nobs)
+    flag = bool((float(p_value) < cfg.alpha) and (delta >= cfg.coverage_delta_threshold))
+    return (float(delta), flag)
+
+
+def test_sparsity_change(
+    train_zero: np.ndarray,
+    recent_zero: np.ndarray,
+    cfg: MonitorConfig,
+) -> tuple[float, bool]:
+    """
+    Detect a significant shift in sparsity rate (proportion of zero-value days).
+
+    STARS Family:       Truthfulness
+    Broken Assumption:  Not Truthful — the zero-value pattern has changed,
+                        which may indicate data suppression, reporting changes,
+                        or structural operational changes
+    Method:             Two-proportion z-test on zero-value day rates
+    Threshold:          cfg.sparsity_delta_threshold (default 0.30)
+                        and cfg.alpha (default 0.05) for statistical gate
+
+    Sparsity rate = zero_value_days / total_days in the window.
+    Both statistical significance (z-test p < alpha) and practical magnitude
+    (|delta| >= sparsity_delta_threshold) must be met to flag.
+
+    Args:
+        train_zero:  Boolean array; True = day had a zero value in train window.
+        recent_zero: Boolean array; True = day had a zero value in recent window.
+        cfg:         MonitorConfig with hard-coded thresholds.
+
+    Returns:
+        (sparsity_delta, flag) where sparsity_delta = |rate_recent - rate_train|.
+        Returns (nan, False) if either array is empty.
+    """
+    if len(train_zero) == 0 or len(recent_zero) == 0:
+        return (float("nan"), False)
+    sparsity_train = float(train_zero.sum()) / len(train_zero)
+    sparsity_recent = float(recent_zero.sum()) / len(recent_zero)
+    delta = abs(sparsity_recent - sparsity_train)
+    count = np.array([int(train_zero.sum()), int(recent_zero.sum())])
+    nobs = np.array([len(train_zero), len(recent_zero)])
+    _, p_value = proportions_ztest(count, nobs)
+    flag = bool((float(p_value) < cfg.alpha) and (delta >= cfg.sparsity_delta_threshold))
+    return (float(delta), flag)
+
+
+# ── Abundance ─────────────────────────────────────────────────────────────────
+
+
+def test_low_volume(
+    train: np.ndarray,
+    cfg: MonitorConfig,
+) -> tuple[float, bool]:
+    """
+    Detect insufficient signal volume in the training window.
+
+    STARS Family:       Abundance
+    Broken Assumption:  Not Abundant — too few observations to infer patterns
+    Method:             Average monthly volume (assumes 30.44 days/month)
+    Threshold:          cfg.low_volume_monthly_threshold (default 3.0 per month)
+
+    Converts the total training volume to an average monthly rate and flags
+    when this rate is below the threshold. Note: ``train`` should contain
+    the raw daily volume values (not just presence indicators).
+
+    Args:
+        train: Daily volume values from the training window.
+        cfg:   MonitorConfig with hard-coded thresholds.
+
+    Returns:
+        (avg_monthly_volume, flag) where flag=True if avg_monthly < threshold.
+        Returns (nan, True) if train is empty (no data = flag by convention).
+    """
+    if len(train) == 0:
+        return (float("nan"), True)
+    avg_monthly = float(train.mean()) * 30.44
+    return (float(avg_monthly), bool(avg_monthly < cfg.low_volume_monthly_threshold))

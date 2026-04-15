@@ -100,3 +100,59 @@ def test_trend_significance_no_flag_for_flat_series():
     flat = RNG.normal(100, 5, 90)
     _, flag = _st.test_trend_significance(TRAIN_STABLE, flat, CFG)
     assert flag is False
+
+
+# ── Task 7 additional imports ──────────────────────────────────────────────────
+# (import is already done via `import stars_pipeline.stars.tests as _st`)
+
+
+# ── test_coverage_shift ────────────────────────────────────────────────────────
+def test_coverage_flags_large_drop_in_coverage():
+    train_present  = np.ones(365, dtype=bool)        # 100% coverage in train
+    recent_present = np.array([True] * 40 + [False] * 50)  # ~44% coverage
+    _, flag = _st.test_coverage_shift(train_present, recent_present, CFG)
+    assert flag is True
+
+def test_coverage_no_flag_for_stable_coverage():
+    train_present  = np.ones(365, dtype=bool)
+    recent_present = np.ones(90, dtype=bool)
+    _, flag = _st.test_coverage_shift(train_present, recent_present, CFG)
+    assert flag is False
+
+def test_coverage_returns_delta():
+    train_present  = np.ones(365, dtype=bool)
+    recent_present = np.zeros(90, dtype=bool)
+    value, _ = _st.test_coverage_shift(train_present, recent_present, CFG)
+    assert abs(value - 1.0) < 1e-6
+
+
+# ── test_sparsity_change ───────────────────────────────────────────────────────
+def test_sparsity_flags_large_increase_in_zeros():
+    train_zero  = np.zeros(365, dtype=bool)           # no zeros in train
+    recent_zero = np.array([True] * 60 + [False] * 30)  # 67% zeros recently
+    _, flag = _st.test_sparsity_change(train_zero, recent_zero, CFG)
+    assert flag is True
+
+def test_sparsity_no_flag_for_stable_sparsity():
+    train_zero  = np.zeros(365, dtype=bool)
+    recent_zero = np.zeros(90, dtype=bool)
+    _, flag = _st.test_sparsity_change(train_zero, recent_zero, CFG)
+    assert flag is False
+
+
+# ── test_low_volume ────────────────────────────────────────────────────────────
+def test_low_volume_flags_below_threshold():
+    # avg monthly = 0.05/day * 30.44 ≈ 1.52 → below threshold of 3
+    low = np.full(365, 0.05)
+    _, flag = _st.test_low_volume(low, CFG)
+    assert flag is True
+
+def test_low_volume_no_flag_above_threshold():
+    high = np.full(365, 10.0)
+    _, flag = _st.test_low_volume(high, CFG)
+    assert flag is False
+
+def test_low_volume_returns_avg_monthly():
+    arr = np.full(365, 5.0)
+    value, _ = _st.test_low_volume(arr, CFG)
+    assert value > 0
