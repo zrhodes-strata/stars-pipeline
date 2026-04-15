@@ -137,7 +137,7 @@ def _build_run_config(args: argparse.Namespace) -> RunConfig:
     output_path = (
         Path(args.output)
         if args.output
-        else Path(f"stars_results_{date.today()}.csv")
+        else Path(f"stars_results_{date_to}.csv")
     )
     return RunConfig(
         strata_ids=strata_ids,
