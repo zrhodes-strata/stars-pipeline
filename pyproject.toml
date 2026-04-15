@@ -33,3 +33,5 @@ include = ["stars_pipeline*", "sagemaker*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+norecursedirs = ["stars_pipeline", ".venv", "build", "dist", ".git"]
+addopts = "--import-mode=importlib"
