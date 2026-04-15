@@ -105,6 +105,12 @@ def to_long_format(stats_df: pd.DataFrame) -> pd.DataFrame:
             "metric_flag":  None,
         })
 
+    _OUTPUT_COLS = [
+        "strata_id", "entity_id", "patient_type_rollup", "service_line",
+        "feature_segment", "stars_family", "metric_name", "metric_value", "metric_flag",
+    ]
+    if not rows:
+        return pd.DataFrame(columns=_OUTPUT_COLS)
     return pd.DataFrame(rows)
 
 

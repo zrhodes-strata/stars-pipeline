@@ -78,6 +78,14 @@ def test_stars_family_violated_carries_family_name():
     assert row["metric_flag"] is None or pd.isna(row["metric_flag"])
 
 
+def test_flagged_indicator_produces_metric_flag_1():
+    stats = _make_stats_row(ks_distribution_flag=True, ks_distribution_value=0.42)
+    result = to_long_format(stats)
+    row = result[result["metric_name"] == "ks_distribution"].iloc[0]
+    assert int(row["metric_flag"]) == 1
+    assert row["metric_value"] == "0.42"
+
+
 def test_write_long_csv_creates_file(tmp_path):
     stats = _make_stats_row()
     out = tmp_path / "results.csv"
