@@ -109,8 +109,8 @@ def fetch_actuals(run_cfg: RunConfig) -> pd.DataFrame:
         "entity_id": run_cfg.entity_id,
         "patient_type": run_cfg.patient_type,
         "service_line": run_cfg.service_line,
-        "collection_id": run_cfg.collection_id,
-        "run_id": run_cfg.run_id,
+        "collection_id": run_cfg.collection_id,  # TODO: wire into WHERE clause once schema confirmed
+        "run_id": run_cfg.run_id,                # TODO: wire into WHERE clause once schema confirmed
     }
 
     logger.info(
