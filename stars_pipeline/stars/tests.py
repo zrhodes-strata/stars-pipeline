@@ -417,3 +417,167 @@ def test_low_volume(
         return (float("nan"), True)
     avg_monthly = float(train.mean()) * 30.44
     return (float(avg_monthly), bool(avg_monthly < cfg.low_volume_monthly_threshold))
+
+
+# ── Regularity ────────────────────────────────────────────────────────────────
+
+
+def test_volatility_shift(
+    train: np.ndarray,
+    recent: np.ndarray,
+    cfg: MonitorConfig,
+) -> tuple[float, bool]:
+    """
+    Detect a disproportionate increase in relative variability (CV ratio).
+
+    STARS Family:       Regularity
+    Broken Assumption:  Not Regular — the series has become much more volatile
+    Method:             Coefficient of Variation ratio:
+                        (sigma/mu)_recent / (sigma/mu)_train
+    Threshold:          cfg.volatility_ratio_threshold (default 3.50)
+
+    The CV (sigma/mu) normalises variability by the mean, making the ratio
+    scale-independent. A ratio of 3.5 means the recent window is 3.5x more
+    variable relative to its mean than the training window was.
+
+    Args:
+        train:  Daily volume values from the training window.
+        recent: Daily volume values from the recent window.
+        cfg:    MonitorConfig with hard-coded thresholds.
+
+    Returns:
+        (cv_ratio, flag) where flag=True if cv_ratio >= cfg.volatility_ratio_threshold.
+        Returns (nan, False) if either array has fewer than 2 observations,
+        or if either mean is zero (CV undefined).
+    """
+    if len(train) < 2 or len(recent) < 2:
+        return (float("nan"), False)
+    mean_train, mean_recent = train.mean(), recent.mean()
+    if mean_train == 0 or mean_recent == 0:
+        return (float("nan"), False)
+    cv_train = train.std(ddof=1) / abs(mean_train)
+    cv_recent = recent.std(ddof=1) / abs(mean_recent)
+    if cv_train == 0:
+        return (float("nan"), False)
+    ratio = cv_recent / cv_train
+    return (float(ratio), bool(ratio >= cfg.volatility_ratio_threshold))
+
+
+def test_outlier_rate(
+    series: np.ndarray,
+    cfg: MonitorConfig,
+) -> tuple[float, bool]:
+    """
+    Detect an excessive proportion of outlier points in the series.
+
+    STARS Family:       Regularity
+    Broken Assumption:  Not Regular — extreme values dominate the series
+    Method:             MAD (Median Absolute Deviation) outlier definition,
+                        then rate = outlier_count / total_points
+    Threshold:          cfg.outlier_z_threshold (default 3.50) for outlier
+                        definition; cfg.outlier_rate_threshold (default 0.30)
+                        for the rate gate
+
+    MAD is more robust than standard deviation for outlier detection because
+    it is not itself influenced by outliers. A point is classified as an
+    outlier when |value - median| > outlier_z_threshold * MAD.
+
+    Note: This test operates on the full series (train + recent combined),
+    not on separate windows.
+
+    Args:
+        series: All available daily volume values for the segment.
+        cfg:    MonitorConfig with hard-coded thresholds.
+
+    Returns:
+        (outlier_rate, flag) where flag=True if rate >= cfg.outlier_rate_threshold.
+        Returns (nan, False) if series has fewer than 3 observations, or if
+        MAD is zero (flat series — no outliers possible).
+    """
+    if len(series) < 3:
+        return (float("nan"), False)
+    median = float(np.median(series))
+    mad = float(np.median(np.abs(series - median)))
+    if mad == 0:
+        # Flat majority: treat any value deviating from the median as an outlier.
+        # This handles series like [10, 10, ..., 1000, 1000] where MAD=0 but
+        # a meaningful fraction of values are clearly atypical.
+        outlier_mask = series != median
+        rate = float(outlier_mask.sum()) / len(series)
+        return (float(rate), bool(rate >= cfg.outlier_rate_threshold))
+    outlier_mask = np.abs(series - median) > cfg.outlier_z_threshold * mad
+    rate = float(outlier_mask.sum()) / len(series)
+    return (float(rate), bool(rate >= cfg.outlier_rate_threshold))
+
+
+def test_acf_divergence(
+    train: np.ndarray,
+    recent: np.ndarray,
+    cfg: MonitorConfig,
+) -> tuple[float, bool]:
+    """
+    Detect a significant change in lag-1 autocorrelation structure.
+
+    STARS Family:       Regularity
+    Broken Assumption:  Not Regular — the short-term autocorrelation pattern
+                        has changed (predictable regularities have been lost
+                        or new ones introduced)
+    Method:             Fisher Z-transform test comparing lag-1 ACF between
+                        training and recent windows
+    Threshold:          cfg.acf_divergence_p_threshold (default 0.05)
+
+    The lag-1 ACF captures how much each day predicts the next. A significant
+    shift suggests the series' short-term dependence structure has changed.
+
+    Args:
+        train:  Daily volume values from the training window.
+        recent: Daily volume values from the recent window.
+        cfg:    MonitorConfig with hard-coded thresholds.
+
+    Returns:
+        (p_value, flag) where flag=True if p_value < cfg.acf_divergence_p_threshold.
+        Returns (nan, False) if either array has fewer than 5 observations.
+    """
+    if len(train) < 5 or len(recent) < 5:
+        return (float("nan"), False)
+    acf_train = float(acf(train, nlags=1, fft=False)[1])
+    acf_recent = float(acf(recent, nlags=1, fft=False)[1])
+    p_value = _fisher_z_test(acf_train, len(train), acf_recent, len(recent))
+    return (float(p_value), bool(p_value < cfg.acf_divergence_p_threshold))
+
+
+def test_dow_pattern_shift(
+    train: np.ndarray,
+    recent: np.ndarray,
+    cfg: MonitorConfig,
+) -> tuple[float, bool]:
+    """
+    Detect a significant change in day-of-week autocorrelation (lag-7 ACF).
+
+    STARS Family:       Regularity
+    Broken Assumption:  Not Regular — the weekly seasonal pattern has changed
+    Method:             Fisher Z-transform test comparing lag-7 ACF between
+                        training and recent windows
+    Threshold:          cfg.acf_divergence_p_threshold (default 0.05)
+                        (reused — no separate threshold needed)
+
+    Lag-7 ACF captures weekly periodicity. A significant shift in lag-7 ACF
+    between train and recent windows indicates the day-of-week pattern has
+    changed — e.g., weekday/weekend volume ratios have shifted.
+
+    Args:
+        train:  Daily volume values from the training window.
+        recent: Daily volume values from the recent window.
+        cfg:    MonitorConfig with hard-coded thresholds.
+
+    Returns:
+        (p_value, flag) where flag=True if p_value < cfg.acf_divergence_p_threshold.
+        Returns (nan, False) if either array has fewer than 14 observations
+        (need at least 2 full weeks for lag-7 to be meaningful).
+    """
+    if len(train) < 14 or len(recent) < 14:
+        return (float("nan"), False)
+    acf_train_7 = float(acf(train, nlags=7, fft=False)[7])
+    acf_recent_7 = float(acf(recent, nlags=7, fft=False)[7])
+    p_value = _fisher_z_test(acf_train_7, len(train), acf_recent_7, len(recent))
+    return (float(p_value), bool(p_value < cfg.acf_divergence_p_threshold))

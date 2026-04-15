@@ -156,3 +156,70 @@ def test_low_volume_returns_avg_monthly():
     arr = np.full(365, 5.0)
     value, _ = _st.test_low_volume(arr, CFG)
     assert value > 0
+
+
+# ── test_volatility_shift ──────────────────────────────────────────────────────
+def test_volatility_flags_large_cv_increase():
+    stable_train   = RNG.normal(100, 5, 365)         # CV ~0.05
+    volatile_recent = RNG.normal(100, 50, 90)        # CV ~0.50 → ratio ~10
+    _, flag = _st.test_volatility_shift(stable_train, volatile_recent, CFG)
+    assert flag is True
+
+def test_volatility_no_flag_for_stable_cv():
+    _, flag = _st.test_volatility_shift(TRAIN_STABLE, RECENT_STABLE, CFG)
+    assert flag is False
+
+def test_volatility_returns_nan_for_zero_mean():
+    zero_train = np.zeros(365)
+    _, flag = _st.test_volatility_shift(zero_train, RECENT_STABLE, CFG)
+    assert flag is False
+
+
+# ── test_outlier_rate ──────────────────────────────────────────────────────────
+def test_outlier_rate_flags_high_outlier_proportion():
+    # Create a series where 40% of values are extreme outliers
+    base = np.full(100, 10.0)
+    base[:40] = 1000.0  # MAD outliers
+    _, flag = _st.test_outlier_rate(base, CFG)
+    assert flag is True
+
+def test_outlier_rate_no_flag_for_clean_series():
+    clean = RNG.normal(100, 5, 200)
+    _, flag = _st.test_outlier_rate(clean, CFG)
+    assert flag is False
+
+def test_outlier_rate_returns_rate():
+    base = np.full(100, 10.0)
+    base[:40] = 1000.0
+    value, _ = _st.test_outlier_rate(base, CFG)
+    assert 0.0 <= value <= 1.0
+
+
+# ── test_acf_divergence ────────────────────────────────────────────────────────
+def test_acf_divergence_flags_when_acf_changes_significantly():
+    # train: autocorrelated; recent: white noise
+    autocorr = np.cumsum(RNG.normal(0, 1, 200))
+    white_noise = RNG.normal(0, 1, 90)
+    _, flag = _st.test_acf_divergence(autocorr, white_noise, CFG)
+    assert flag is True
+
+def test_acf_divergence_no_flag_for_similar_acf():
+    _, flag = _st.test_acf_divergence(TRAIN_STABLE, RECENT_STABLE, CFG)
+    assert flag is False
+
+def test_acf_divergence_returns_nan_for_short_input():
+    stat, flag = _st.test_acf_divergence(np.ones(3), np.ones(3), CFG)
+    assert np.isnan(stat)
+    assert flag is False
+
+
+# ── test_dow_pattern_shift ─────────────────────────────────────────────────────
+def test_dow_pattern_no_flag_for_stable_series():
+    # Both windows have no strong DOW pattern — ACF lag-7 ~ 0
+    _, flag = _st.test_dow_pattern_shift(TRAIN_STABLE, RECENT_STABLE, CFG)
+    assert flag is False
+
+def test_dow_pattern_returns_nan_for_short_input():
+    stat, flag = _st.test_dow_pattern_shift(np.ones(5), np.ones(5), CFG)
+    assert np.isnan(stat)
+    assert flag is False
