@@ -26,3 +26,17 @@ def test_extra_fields_are_included(capsys):
     payload = json.loads(captured.out.strip())
     assert payload["strata_id"] == 84
     assert payload["n_segments"] == 10
+
+
+def test_non_serializable_extra_coerced_to_string(capsys):
+    configure_logging(level=logging.INFO)
+    logger = get_logger("test.nonserial")
+
+    class CustomObj:
+        def __str__(self) -> str:
+            return "custom_object_str"
+
+    logger.info("with custom object", extra={"obj": CustomObj()})
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out.strip())
+    assert payload["obj"] == "custom_object_str"
