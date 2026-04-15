@@ -28,5 +28,8 @@ stars-pipeline = "stars_pipeline.cli:main"
 [tool.setuptools.packages.find]
 include = ["stars_pipeline*", "sagemaker*"]
 
+[tool.setuptools.package-data]
+"stars_pipeline" = ["sql/*.sql"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
