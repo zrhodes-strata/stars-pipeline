@@ -78,6 +78,12 @@ def test_stationarity_flags_transition_to_nonstationary():
     _, flag = _st.test_stationarity(stationary_train, nonstationary_recent, CFG)
     assert flag is True
 
+def test_stationarity_no_flag_when_both_stationary():
+    stationary_train  = RNG.normal(0, 1, 60)
+    stationary_recent = RNG.normal(0, 1, 40)
+    _, flag = _st.test_stationarity(stationary_train, stationary_recent, CFG)
+    assert flag is False
+
 def test_stationarity_returns_nan_for_short_input():
     stat, flag = _st.test_stationarity(np.ones(3), np.ones(3), CFG)
     assert np.isnan(stat)
