@@ -187,7 +187,7 @@ _REGULARITY_FLAGS   = [
 
 def apply_thresholds(stats_df: pd.DataFrame) -> pd.DataFrame:
     """
-    Derive is_normal and stars_family_violated from pre-computed flag columns.
+    Derive violation counts and is_flagged from pre-computed flag columns.
 
     Vectorised — no per-series loops. Designed to be called after run_monitoring().
     Can also be called independently for re-classification (e.g., threshold tuning)
@@ -198,17 +198,21 @@ def apply_thresholds(stats_df: pd.DataFrame) -> pd.DataFrame:
                   segment and boolean flag columns for each indicator.
 
     Returns:
-        The same DataFrame with two additional columns:
-            is_normal (bool)
-                True if no flag is set in any family.
-            stars_family_violated (str or None)
-                Name of the first violated family in priority order
-                (Stability > Truthfulness > Abundance > Regularity), or None
-                if the segment is Normal.
+        The same DataFrame with five additional columns:
+            stability_violations (int)
+                Number of Stability flags set (0–6).
+            truthfulness_violations (int)
+                Number of Truthfulness flags set (0–2).
+            abundance_violations (int)
+                Number of Abundance flags set (0–1).
+            regularity_violations (int)
+                Number of Regularity flags set (0–4).
+            is_flagged (bool)
+                True if any family has at least one violation.
     """
     df = stats_df.copy()
 
-    def _any_flags(cols: list[str]) -> pd.Series:
+    def _count_flags(cols: list[str]) -> pd.Series:
         missing = [c for c in cols if c not in df.columns]
         if missing:
             logger.warning(
@@ -217,27 +221,19 @@ def apply_thresholds(stats_df: pd.DataFrame) -> pd.DataFrame:
             )
         present = [c for c in cols if c in df.columns]
         if not present:
-            return pd.Series(False, index=df.index)
-        return df[present].fillna(False).astype(bool).any(axis=1)
+            return pd.Series(0, index=df.index, dtype=int)
+        return df[present].fillna(False).astype(bool).sum(axis=1).astype(int)
 
-    stability_violated    = _any_flags(_STABILITY_FLAGS)
-    truthfulness_violated = _any_flags(_TRUTHFULNESS_FLAGS)
-    abundance_violated    = _any_flags(_ABUNDANCE_FLAGS)
-    regularity_violated   = _any_flags(_REGULARITY_FLAGS)
+    df["stability_violations"]    = _count_flags(_STABILITY_FLAGS)
+    df["truthfulness_violations"] = _count_flags(_TRUTHFULNESS_FLAGS)
+    df["abundance_violations"]    = _count_flags(_ABUNDANCE_FLAGS)
+    df["regularity_violations"]   = _count_flags(_REGULARITY_FLAGS)
 
-    df["is_normal"] = ~(
-        stability_violated | truthfulness_violated |
-        abundance_violated | regularity_violated
-    )
-
-    df["stars_family_violated"] = pd.Series(
-        np.select(
-            [stability_violated, truthfulness_violated, abundance_violated, regularity_violated],
-            ["Stability", "Truthfulness", "Abundance", "Regularity"],
-            default=None,
-        ),
-        index=df.index,
-        dtype=object,
+    df["is_flagged"] = (
+        (df["stability_violations"] > 0)
+        | (df["truthfulness_violations"] > 0)
+        | (df["abundance_violations"] > 0)
+        | (df["regularity_violations"] > 0)
     )
 
     return df

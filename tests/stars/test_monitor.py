@@ -73,21 +73,46 @@ def test_apply_thresholds_adds_summary_columns():
     df = _make_df()
     stats = run_monitoring(df, _make_run_cfg(), MonitorConfig())
     result = apply_thresholds(stats)
-    assert "is_normal" in result.columns
-    assert "stars_family_violated" in result.columns
+    for col in (
+        "is_flagged",
+        "stability_violations",
+        "truthfulness_violations",
+        "abundance_violations",
+        "regularity_violations",
+    ):
+        assert col in result.columns, f"Missing column: {col}"
+    assert "is_normal" not in result.columns
+    assert "stars_family_violated" not in result.columns
 
 
-def test_normal_segment_is_classified_normal():
-    # Use relaxed thresholds to avoid near-zero slope ratio instability and KPSS
-    # p-value boundary effects that can spuriously flag iid normal data.
-    # slope_change_ratio_threshold=50 sits above the typical noise ratio (~36x)
-    # for near-flat series; kpss_alpha=0.04 avoids the 0.10 table boundary.
+def test_normal_segment_is_not_flagged():
     cfg = MonitorConfig(slope_change_ratio_threshold=50.0, kpss_alpha=0.04)
-    df = _make_df(n_days=400, mean=100.0, std=5.0)  # stable, no shift
+    df = _make_df(n_days=400, mean=100.0, std=5.0)
     stats = run_monitoring(df, _make_run_cfg(), cfg)
     result = apply_thresholds(stats)
-    assert bool(result["is_normal"].iloc[0]) is True
-    assert result["stars_family_violated"].iloc[0] is None
+    assert bool(result["is_flagged"].iloc[0]) is False
+    assert int(result["stability_violations"].iloc[0]) == 0
+    assert int(result["truthfulness_violations"].iloc[0]) == 0
+    assert int(result["abundance_violations"].iloc[0]) == 0
+    assert int(result["regularity_violations"].iloc[0]) == 0
+
+
+def test_violation_counts_match_flags():
+    """If stability flags ks_distribution and level_shift, stability_violations==2."""
+    df = _make_df()
+    stats = run_monitoring(df, _make_run_cfg(), MonitorConfig())
+    # Zero out all flag columns first, then manually force two Stability flags
+    # and one Regularity flag so the counts are deterministic.
+    stats = stats.copy()
+    flag_cols = [c for c in stats.columns if c.endswith("_flag")]
+    stats[flag_cols] = False
+    stats["ks_distribution_flag"] = True
+    stats["level_shift_flag"] = True
+    stats["volatility_shift_flag"] = True
+    result = apply_thresholds(stats)
+    assert int(result["stability_violations"].iloc[0]) == 2
+    assert int(result["regularity_violations"].iloc[0]) == 1
+    assert int(result["is_flagged"].iloc[0]) == 1
 
 
 def test_multiple_segments_produce_multiple_rows():
