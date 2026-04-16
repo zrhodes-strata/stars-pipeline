@@ -77,18 +77,19 @@ def _get_connection() -> snowflake.connector.SnowflakeConnection:
     connection_name = os.environ.get("SNOWFLAKE_CONNECTION_NAME")
 
     if connection_name:
-        missing = [v for v in _REQUIRED_WITH_CONNECTION if not os.environ.get(v)]
-        if missing:
-            raise EnvironmentError(
-                f"Missing required Snowflake environment variables: {', '.join(missing)}"
-            )
         logger.info("Using named connection", extra={"connection_name": connection_name})
-        return snowflake.connector.connect(
-            connection_name=connection_name,
-            warehouse=os.environ["SNOWFLAKE_WAREHOUSE"],
-            database=os.environ["SNOWFLAKE_DATABASE"],
-            schema=os.environ["SNOWFLAKE_SCHEMA"],
-        )
+        # Warehouse/database/schema are read from connections.toml; env vars
+        # can optionally override them if needed.
+        overrides = {
+            k: os.environ[v]
+            for k, v in [
+                ("warehouse", "SNOWFLAKE_WAREHOUSE"),
+                ("database",  "SNOWFLAKE_DATABASE"),
+                ("schema",    "SNOWFLAKE_SCHEMA"),
+            ]
+            if os.environ.get(v)
+        }
+        return snowflake.connector.connect(connection_name=connection_name, **overrides)
 
     missing = [v for v in _REQUIRED_ENV_VARS if not os.environ.get(v)]
     if missing:
