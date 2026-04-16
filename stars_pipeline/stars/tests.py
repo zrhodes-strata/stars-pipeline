@@ -28,10 +28,13 @@ to compute the statistic reliably. Callers should treat NaN metric_value as
 """
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import statsmodels.api as sm
 from scipy.stats import ks_2samp, linregress, norm, ttest_ind
 from statsmodels.stats.proportion import proportions_ztest
+from statsmodels.tools.sm_exceptions import InterpolationWarning
 from statsmodels.tsa.stattools import acf, kpss
 
 from stars_pipeline.config import MonitorConfig
@@ -258,8 +261,6 @@ def test_stationarity(
     if len(train) < 10 or len(recent) < 10:
         return (float("nan"), False)
     try:
-        import warnings
-        from statsmodels.tools.sm_exceptions import InterpolationWarning
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", InterpolationWarning)
             _, p_train, _, _ = kpss(train, regression="c", nlags="auto")
@@ -344,7 +345,6 @@ def test_coverage_shift(
     delta = abs(cov_recent - cov_train)
     count = np.array([int(train_present.sum()), int(recent_present.sum())])
     nobs = np.array([len(train_present), len(recent_present)])
-    import warnings
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
         _, p_value = proportions_ztest(count, nobs)
@@ -388,7 +388,6 @@ def test_sparsity_change(
     delta = abs(sparsity_recent - sparsity_train)
     count = np.array([int(train_zero.sum()), int(recent_zero.sum())])
     nobs = np.array([len(train_zero), len(recent_zero)])
-    import warnings
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
         _, p_value = proportions_ztest(count, nobs)
