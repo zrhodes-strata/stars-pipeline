@@ -12,9 +12,12 @@ run_monitoring(df, run_cfg, monitor_cfg)
 
 apply_thresholds(stats_df)
     Takes the wide stats DataFrame produced by run_monitoring() and derives
-    two summary columns:
-      is_normal              True if no flag in any family
-      stars_family_violated  Name of the first violated family, or None
+    five summary columns:
+      stability_violations    Number of Stability flags set (0–6)
+      truthfulness_violations Number of Truthfulness flags set (0–2)
+      abundance_violations    Number of Abundance flags set (0–1)
+      regularity_violations   Number of Regularity flags set (0–4)
+      is_flagged              True if any family has at least one violation
 
 Compute / classify decoupling
 ------------------------------
