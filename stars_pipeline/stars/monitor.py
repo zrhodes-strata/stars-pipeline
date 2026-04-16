@@ -27,7 +27,6 @@ allows downstream re-classification without re-running the expensive tests.
 """
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 
 from stars_pipeline.config import MonitorConfig, RunConfig
