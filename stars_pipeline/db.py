@@ -6,30 +6,25 @@ Snowflake connection and query execution for the STARS pipeline.
 Credentials are read exclusively from environment variables.
 Never pass credentials as CLI arguments or store them in config files.
 
-Required Environment Variables
--------------------------------
-SNOWFLAKE_ACCOUNT
-    Account identifier, e.g. ``xy12345.us-east-1``.
-SNOWFLAKE_USER
-    Username or SSO email address.
-SNOWFLAKE_WAREHOUSE
-    Compute warehouse name.
-SNOWFLAKE_DATABASE
-    Target database name.
-SNOWFLAKE_SCHEMA
-    Target schema name.
+Authentication modes (mutually exclusive, checked in order)
+------------------------------------------------------------
+1. Named connection (local / developer use — simplest):
+       SNOWFLAKE_CONNECTION_NAME=my_example_connection
+   Reads account/user/authenticator/role from ~/.snowflake/connections.toml.
+   Still requires SNOWFLAKE_WAREHOUSE, SNOWFLAKE_DATABASE, SNOWFLAKE_SCHEMA
+   as overrides (set them as env vars or add them to the connections.toml entry).
 
-Authentication
---------------
-Two modes, selected by which env vars are present:
+2. Password auth (SageMaker / service accounts):
+       SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER, SNOWFLAKE_PASSWORD,
+       SNOWFLAKE_WAREHOUSE, SNOWFLAKE_DATABASE, SNOWFLAKE_SCHEMA
+   The connector uses username + password directly.
 
-Password auth (SageMaker / service accounts):
-    Set SNOWFLAKE_PASSWORD. The connector uses username + password.
-
-SSO auth (local / developer use):
-    Leave SNOWFLAKE_PASSWORD unset. The connector opens a browser tab
-    for SSO login. Set SNOWFLAKE_AUTHENTICATOR to override the default
-    ``externalbrowser`` (e.g. ``okta_https://...`` for Okta).
+3. SSO auth (local / developer use):
+       SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER,
+       SNOWFLAKE_WAREHOUSE, SNOWFLAKE_DATABASE, SNOWFLAKE_SCHEMA
+   Leave SNOWFLAKE_PASSWORD unset. The connector opens a browser tab for SSO.
+   Override the authenticator with SNOWFLAKE_AUTHENTICATOR (default:
+   ``externalbrowser``).
 
 SageMaker
 ---------
@@ -60,20 +55,41 @@ _REQUIRED_ENV_VARS = (
     "SNOWFLAKE_SCHEMA",
 )
 
+_REQUIRED_WITH_CONNECTION = (
+    "SNOWFLAKE_WAREHOUSE",
+    "SNOWFLAKE_DATABASE",
+    "SNOWFLAKE_SCHEMA",
+)
+
 
 def _get_connection() -> snowflake.connector.SnowflakeConnection:
     """
     Build a Snowflake connection from environment variables.
 
-    Uses password auth when SNOWFLAKE_PASSWORD is set; falls back to
-    browser-based SSO (externalbrowser) otherwise. Override the SSO
-    authenticator with SNOWFLAKE_AUTHENTICATOR.
+    Checks for SNOWFLAKE_CONNECTION_NAME first (named connection from
+    ~/.snowflake/connections.toml). Falls back to password or SSO auth.
 
     Raises
     ------
     EnvironmentError
-        If any required environment variable is absent or empty.
+        If required environment variables are absent or empty.
     """
+    connection_name = os.environ.get("SNOWFLAKE_CONNECTION_NAME")
+
+    if connection_name:
+        missing = [v for v in _REQUIRED_WITH_CONNECTION if not os.environ.get(v)]
+        if missing:
+            raise EnvironmentError(
+                f"Missing required Snowflake environment variables: {', '.join(missing)}"
+            )
+        logger.info("Using named connection", extra={"connection_name": connection_name})
+        return snowflake.connector.connect(
+            connection_name=connection_name,
+            warehouse=os.environ["SNOWFLAKE_WAREHOUSE"],
+            database=os.environ["SNOWFLAKE_DATABASE"],
+            schema=os.environ["SNOWFLAKE_SCHEMA"],
+        )
+
     missing = [v for v in _REQUIRED_ENV_VARS if not os.environ.get(v)]
     if missing:
         raise EnvironmentError(
