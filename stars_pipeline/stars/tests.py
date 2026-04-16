@@ -258,8 +258,12 @@ def test_stationarity(
     if len(train) < 10 or len(recent) < 10:
         return (float("nan"), False)
     try:
-        _, p_train, _, _ = kpss(train, regression="c", nlags="auto")
-        stat_recent, p_recent, _, _ = kpss(recent, regression="c", nlags="auto")
+        import warnings
+        from statsmodels.tools.sm_exceptions import InterpolationWarning
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", InterpolationWarning)
+            _, p_train, _, _ = kpss(train, regression="c", nlags="auto")
+            stat_recent, p_recent, _, _ = kpss(recent, regression="c", nlags="auto")
     except Exception:
         return (float("nan"), False)
     train_stationary = p_train >= cfg.kpss_alpha
@@ -340,7 +344,10 @@ def test_coverage_shift(
     delta = abs(cov_recent - cov_train)
     count = np.array([int(train_present.sum()), int(recent_present.sum())])
     nobs = np.array([len(train_present), len(recent_present)])
-    _, p_value = proportions_ztest(count, nobs)
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        _, p_value = proportions_ztest(count, nobs)
     flag = bool((float(p_value) < cfg.alpha) and (delta >= cfg.coverage_delta_threshold))
     return (float(delta), flag)
 
@@ -381,7 +388,10 @@ def test_sparsity_change(
     delta = abs(sparsity_recent - sparsity_train)
     count = np.array([int(train_zero.sum()), int(recent_zero.sum())])
     nobs = np.array([len(train_zero), len(recent_zero)])
-    _, p_value = proportions_ztest(count, nobs)
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        _, p_value = proportions_ztest(count, nobs)
     flag = bool((float(p_value) < cfg.alpha) and (delta >= cfg.sparsity_delta_threshold))
     return (float(delta), flag)
 
