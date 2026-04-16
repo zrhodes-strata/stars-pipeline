@@ -11,13 +11,16 @@ Output schema — one row per segment per STARS indicator:
     service_line        str     Service line name
     feature_segment     str     Concatenated key: strata_id|entity_id|patient_type|service_line
     stars_family        str     STARS family (Stability / Truthfulness / Abundance / Regularity / Summary)
-    metric_name         str     Indicator name (e.g. ks_distribution, level_shift, is_normal)
-    metric_value        str     Raw statistic as string; family name for stars_family_violated; NULL for is_normal
-    metric_flag         int     1 = flagged/abnormal, 0 = pass/normal; NULL for stars_family_violated
+    metric_name         str     Indicator name or summary metric name
+    metric_value        str     Raw statistic as string; NULL for binary-only rows
+    metric_flag         int     1 = flagged/abnormal, 0 = pass/normal
 
-Two summary rows are appended for each segment:
-    is_normal             metric_value=NULL, metric_flag=1/0
-    stars_family_violated metric_value=<family name or NULL>, metric_flag=NULL
+Five summary rows are appended for each segment (stars_family="Summary"):
+    is_flagged                metric_value=total violations (int), metric_flag=1/0
+    stability_violations      metric_value=count (0-6),            metric_flag=1/0
+    truthfulness_violations   metric_value=count (0-2),            metric_flag=1/0
+    abundance_violations      metric_value=count (0-1),            metric_flag=1/0
+    regularity_violations     metric_value=count (0-4),            metric_flag=1/0
 """
 from __future__ import annotations
 
@@ -48,6 +51,13 @@ _METRIC_FAMILY: dict[str, str] = {
 
 _ID_COLS = ("strata_id", "entity_id", "patient_type_rollup", "service_line", "feature_segment")
 
+_SUMMARY_METRICS = (
+    "stability_violations",
+    "truthfulness_violations",
+    "abundance_violations",
+    "regularity_violations",
+)
+
 
 def to_long_format(stats_df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -57,8 +67,9 @@ def to_long_format(stats_df: pd.DataFrame) -> pd.DataFrame:
     Args:
         stats_df: DataFrame produced by monitor.apply_thresholds(). Must contain
                   columns of the form ``{metric_name}_value`` and ``{metric_name}_flag``
-                  for each indicator in _METRIC_FAMILY, plus ``is_normal`` and
-                  ``stars_family_violated``.
+                  for each indicator in _METRIC_FAMILY, plus ``is_flagged``,
+                  ``stability_violations``, ``truthfulness_violations``,
+                  ``abundance_violations``, and ``regularity_violations``.
 
     Returns:
         Long-format DataFrame with columns:
@@ -85,25 +96,29 @@ def to_long_format(stats_df: pd.DataFrame) -> pd.DataFrame:
                 "metric_flag":  int(raw_flag) if pd.notna(raw_flag) else None,
             })
 
-        # Summary: is_normal
-        is_normal = stat_row.get("is_normal")
+        # Summary: is_flagged — value is total violation count, flag is 1/0
+        family_counts = [
+            int(stat_row.get(m, 0) or 0) for m in _SUMMARY_METRICS
+        ]
+        total_violations = sum(family_counts)
+        is_flagged = stat_row.get("is_flagged")
         rows.append({
             **segment,
             "stars_family": "Summary",
-            "metric_name":  "is_normal",
-            "metric_value": None,
-            "metric_flag":  int(bool(is_normal)) if pd.notna(is_normal) else None,
+            "metric_name":  "is_flagged",
+            "metric_value": str(total_violations),
+            "metric_flag":  int(bool(is_flagged)) if pd.notna(is_flagged) else None,
         })
 
-        # Summary: stars_family_violated
-        family_violated = stat_row.get("stars_family_violated")
-        rows.append({
-            **segment,
-            "stars_family": "Summary",
-            "metric_name":  "stars_family_violated",
-            "metric_value": family_violated if pd.notna(family_violated) else None,
-            "metric_flag":  None,
-        })
+        # Summary: one row per family violation count
+        for metric_name, count in zip(_SUMMARY_METRICS, family_counts):
+            rows.append({
+                **segment,
+                "stars_family": "Summary",
+                "metric_name":  metric_name,
+                "metric_value": str(count),
+                "metric_flag":  1 if count > 0 else 0,
+            })
 
     _OUTPUT_COLS = [
         "strata_id", "entity_id", "patient_type_rollup", "service_line",

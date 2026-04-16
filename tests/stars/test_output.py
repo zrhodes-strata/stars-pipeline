@@ -1,5 +1,4 @@
 # tests/stars/test_output.py
-import numpy as np
 import pandas as pd
 import pytest
 from pathlib import Path
@@ -16,21 +15,25 @@ def _make_stats_row(**overrides):
         "service_line": "Cardiology",
         "feature_segment": "84|E01|Inpatient|Cardiology",
         "mesh": 2.5,
-        "ks_distribution_value": 0.10,  "ks_distribution_flag": False,
-        "level_shift_value": 0.50,      "level_shift_flag": False,
-        "dw_shift_value": 0.40,         "dw_shift_flag": False,
-        "slope_change_ratio_value": 0.8,"slope_change_ratio_flag": False,
-        "stationarity_value": 0.15,     "stationarity_flag": False,
-        "trend_significance_value": 0.3,"trend_significance_flag": False,
-        "coverage_shift_value": 0.02,   "coverage_shift_flag": False,
-        "sparsity_change_value": 0.01,  "sparsity_change_flag": False,
-        "low_volume_value": 50.0,       "low_volume_flag": False,
-        "volatility_shift_value": 1.1,  "volatility_shift_flag": False,
-        "outlier_rate_value": 0.02,     "outlier_rate_flag": False,
-        "acf_divergence_value": 0.3,    "acf_divergence_flag": False,
-        "dow_pattern_shift_value": 0.2, "dow_pattern_shift_flag": False,
-        "is_normal": True,
-        "stars_family_violated": None,
+        "ks_distribution_value": 0.10,   "ks_distribution_flag": False,
+        "level_shift_value": 0.50,       "level_shift_flag": False,
+        "dw_shift_value": 0.40,          "dw_shift_flag": False,
+        "slope_change_ratio_value": 0.8, "slope_change_ratio_flag": False,
+        "stationarity_value": 0.15,      "stationarity_flag": False,
+        "trend_significance_value": 0.3, "trend_significance_flag": False,
+        "coverage_shift_value": 0.02,    "coverage_shift_flag": False,
+        "sparsity_change_value": 0.01,   "sparsity_change_flag": False,
+        "low_volume_value": 50.0,        "low_volume_flag": False,
+        "volatility_shift_value": 1.1,   "volatility_shift_flag": False,
+        "outlier_rate_value": 0.02,      "outlier_rate_flag": False,
+        "acf_divergence_value": 0.3,     "acf_divergence_flag": False,
+        "dow_pattern_shift_value": 0.2,  "dow_pattern_shift_flag": False,
+        # New summary columns from apply_thresholds()
+        "is_flagged": False,
+        "stability_violations": 0,
+        "truthfulness_violations": 0,
+        "abundance_violations": 0,
+        "regularity_violations": 0,
     }
     row.update(overrides)
     return pd.DataFrame([row])
@@ -46,36 +49,74 @@ def test_long_format_has_correct_columns():
     }
 
 
-def test_long_format_has_one_row_per_indicator_plus_summary():
+def test_long_format_has_18_rows_per_segment():
     stats = _make_stats_row()
     result = to_long_format(stats)
-    # 13 indicators + 2 summary rows (is_normal, stars_family_violated)
-    assert len(result) == 15
+    # 13 indicators + 5 summary rows
+    assert len(result) == 18
 
 
-def test_long_format_metric_names_match_indicators():
+def test_long_format_metric_names_include_new_summaries():
     stats = _make_stats_row()
     result = to_long_format(stats)
     names = set(result["metric_name"])
-    for name in ["ks_distribution", "level_shift", "low_volume",
-                 "is_normal", "stars_family_violated"]:
-        assert name in names
+    for name in [
+        "ks_distribution", "level_shift", "low_volume",
+        "is_flagged",
+        "stability_violations",
+        "truthfulness_violations",
+        "abundance_violations",
+        "regularity_violations",
+    ]:
+        assert name in names, f"Missing metric_name: {name}"
+    assert "is_normal" not in names
+    assert "stars_family_violated" not in names
 
 
-def test_is_normal_row_flag_is_1_for_normal_segment():
-    stats = _make_stats_row(is_normal=True)
+def test_is_flagged_row_no_violations():
+    stats = _make_stats_row(is_flagged=False, stability_violations=0,
+                            truthfulness_violations=0, abundance_violations=0,
+                            regularity_violations=0)
     result = to_long_format(stats)
-    row = result[result["metric_name"] == "is_normal"].iloc[0]
+    row = result[result["metric_name"] == "is_flagged"].iloc[0]
+    assert int(row["metric_flag"]) == 0
+    assert row["metric_value"] == "0"
+
+
+def test_is_flagged_row_with_violations():
+    stats = _make_stats_row(
+        is_flagged=True,
+        stability_violations=2,
+        truthfulness_violations=1,
+        abundance_violations=0,
+        regularity_violations=0,
+        ks_distribution_flag=True,
+        level_shift_flag=True,
+        coverage_shift_flag=True,
+    )
+    result = to_long_format(stats)
+    row = result[result["metric_name"] == "is_flagged"].iloc[0]
     assert int(row["metric_flag"]) == 1
-    assert row["metric_value"] is None or pd.isna(row["metric_value"])
+    assert row["metric_value"] == "3"  # 2 + 1 + 0 + 0
 
 
-def test_stars_family_violated_carries_family_name():
-    stats = _make_stats_row(is_normal=False, stars_family_violated="Stability")
+def test_stability_violations_row():
+    stats = _make_stats_row(
+        stability_violations=3, is_flagged=True,
+        ks_distribution_flag=True, level_shift_flag=True, dw_shift_flag=True,
+    )
     result = to_long_format(stats)
-    row = result[result["metric_name"] == "stars_family_violated"].iloc[0]
-    assert row["metric_value"] == "Stability"
-    assert row["metric_flag"] is None or pd.isna(row["metric_flag"])
+    row = result[result["metric_name"] == "stability_violations"].iloc[0]
+    assert int(row["metric_flag"]) == 1
+    assert row["metric_value"] == "3"
+
+
+def test_zero_violations_family_row_flag_is_0():
+    stats = _make_stats_row(regularity_violations=0)
+    result = to_long_format(stats)
+    row = result[result["metric_name"] == "regularity_violations"].iloc[0]
+    assert int(row["metric_flag"]) == 0
+    assert row["metric_value"] == "0"
 
 
 def test_flagged_indicator_produces_metric_flag_1():
@@ -92,4 +133,4 @@ def test_write_long_csv_creates_file(tmp_path):
     write_long_csv(stats, out)
     assert out.exists()
     df = pd.read_csv(out)
-    assert len(df) == 15
+    assert len(df) == 18
