@@ -1,6 +1,5 @@
 # tests/stars/test_output.py
 import pandas as pd
-import pytest
 from pathlib import Path
 
 from stars_pipeline.stars.output import to_long_format, write_long_csv
