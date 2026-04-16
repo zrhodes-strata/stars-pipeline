@@ -6,7 +6,7 @@
 --
 -- This file is read and rendered by stars_pipeline/db.py. The {strata_ids}
 -- placeholder is a Python .format() token (filled with integer literals before
--- execution). All other parameters use %(name)s snowflake-connector binding.
+-- execution). All other parameters use named snowflake-connector binding.
 --
 -- Parameters
 -- ----------
