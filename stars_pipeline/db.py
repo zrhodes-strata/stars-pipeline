@@ -11,15 +11,25 @@ Required Environment Variables
 SNOWFLAKE_ACCOUNT
     Account identifier, e.g. ``xy12345.us-east-1``.
 SNOWFLAKE_USER
-    Service account username.
-SNOWFLAKE_PASSWORD
-    Service account password.
+    Username or SSO email address.
 SNOWFLAKE_WAREHOUSE
     Compute warehouse name.
 SNOWFLAKE_DATABASE
     Target database name.
 SNOWFLAKE_SCHEMA
     Target schema name.
+
+Authentication
+--------------
+Two modes, selected by which env vars are present:
+
+Password auth (SageMaker / service accounts):
+    Set SNOWFLAKE_PASSWORD. The connector uses username + password.
+
+SSO auth (local / developer use):
+    Leave SNOWFLAKE_PASSWORD unset. The connector opens a browser tab
+    for SSO login. Set SNOWFLAKE_AUTHENTICATOR to override the default
+    ``externalbrowser`` (e.g. ``okta_https://...`` for Okta).
 
 SageMaker
 ---------
@@ -45,7 +55,6 @@ _SQL_PATH = Path(__file__).parent / "sql" / "actuals.sql"
 _REQUIRED_ENV_VARS = (
     "SNOWFLAKE_ACCOUNT",
     "SNOWFLAKE_USER",
-    "SNOWFLAKE_PASSWORD",
     "SNOWFLAKE_WAREHOUSE",
     "SNOWFLAKE_DATABASE",
     "SNOWFLAKE_SCHEMA",
@@ -55,6 +64,10 @@ _REQUIRED_ENV_VARS = (
 def _get_connection() -> snowflake.connector.SnowflakeConnection:
     """
     Build a Snowflake connection from environment variables.
+
+    Uses password auth when SNOWFLAKE_PASSWORD is set; falls back to
+    browser-based SSO (externalbrowser) otherwise. Override the SSO
+    authenticator with SNOWFLAKE_AUTHENTICATOR.
 
     Raises
     ------
@@ -66,10 +79,24 @@ def _get_connection() -> snowflake.connector.SnowflakeConnection:
         raise EnvironmentError(
             f"Missing required Snowflake environment variables: {', '.join(missing)}"
         )
+
+    password = os.environ.get("SNOWFLAKE_PASSWORD")
+    if password:
+        return snowflake.connector.connect(
+            account=os.environ["SNOWFLAKE_ACCOUNT"],
+            user=os.environ["SNOWFLAKE_USER"],
+            password=password,
+            warehouse=os.environ["SNOWFLAKE_WAREHOUSE"],
+            database=os.environ["SNOWFLAKE_DATABASE"],
+            schema=os.environ["SNOWFLAKE_SCHEMA"],
+        )
+
+    authenticator = os.environ.get("SNOWFLAKE_AUTHENTICATOR", "externalbrowser")
+    logger.info("Using SSO authentication", extra={"authenticator": authenticator})
     return snowflake.connector.connect(
         account=os.environ["SNOWFLAKE_ACCOUNT"],
         user=os.environ["SNOWFLAKE_USER"],
-        password=os.environ["SNOWFLAKE_PASSWORD"],
+        authenticator=authenticator,
         warehouse=os.environ["SNOWFLAKE_WAREHOUSE"],
         database=os.environ["SNOWFLAKE_DATABASE"],
         schema=os.environ["SNOWFLAKE_SCHEMA"],
