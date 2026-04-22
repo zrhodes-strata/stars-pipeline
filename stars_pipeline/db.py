@@ -120,63 +120,190 @@ def _get_connection() -> snowflake.connector.SnowflakeConnection:
     )
 
 
-def fetch_actuals(run_cfg: RunConfig) -> pd.DataFrame:
+_DAGSTER_TABLE = "datalake_sandbox.public_volume_predictions.dagster_run_details"
+
+_RESOLUTION_SQL_TEMPLATE = """
+SELECT
+    strata_id,
+    PARSE_JSON(metadata):tags:cliententityid::INT AS entity_id,
+    pipeline_run_id
+FROM {dagster_table}
+WHERE strata_id IN ({strata_ids})
+  AND {mode_filter}
+"""
+
+_RESOLUTION_SQL_MOST_RECENT_FILTER = (
+    "DATE(created_at) = (SELECT MAX(DATE(created_at)) FROM {dagster_table})"
+)
+
+
+def _resolve_collection_id(
+    run_cfg: RunConfig,
+    conn: snowflake.connector.SnowflakeConnection,
+) -> tuple[dict[tuple[int, int], str], list[dict]]:
     """
-    Execute actuals.sql with the given RunConfig and return a DataFrame.
+    Query dagster_run_details to resolve pipeline_run_id per (strata_id, entity_id).
 
-    The SQL template is read from stars_pipeline/sql/actuals.sql.
-    ``strata_ids`` are rendered as integer literals into the IN clause
-    before execution (safe — they are integers, not user strings).
-    All other parameters use named snowflake-connector bind parameters.
+    Returns
+    -------
+    (resolved, warnings) where:
+        resolved: dict mapping (strata_id, entity_id) → pipeline_run_id
+        warnings: list of warning dicts (warning_type, strata_id, entity_id,
+                  run_mode, requested_date, fallback_date, message)
 
-    Args:
-        run_cfg: RunConfig built from CLI arguments.
+    Raises
+    ------
+    ValueError
+        If any (strata_id, entity_id) pair maps to 2+ distinct pipeline_run_ids.
+        If most-recent or date-range returns 0 total results.
+    """
+    strata_str = ", ".join(str(s) for s in run_cfg.strata_ids)
+    mode = run_cfg.run_mode
+    warnings: list[dict] = []
 
-    Returns:
-        DataFrame with columns:
-            strata_id (int), entity_id (str), patient_type_rollup (str),
-            service_line (str), date (datetime64), actual (float), mesh (float)
+    def _run_query(mode_filter: str, params: dict | None = None) -> pd.DataFrame:
+        sql = _RESOLUTION_SQL_TEMPLATE.format(
+            dagster_table=_DAGSTER_TABLE,
+            strata_ids=strata_str,
+            mode_filter=mode_filter,
+        )
+        cur = conn.cursor()
+        cur.execute(sql, params or {})
+        df = cur.fetch_pandas_all()
+        df.columns = [c.lower() for c in df.columns]
+        return df
 
-    Notes:
-        collection_id and run_id are passed as bind parameters but are not
-        yet wired into the WHERE clause. See TODO comments in actuals.sql.
+    def _check_duplicates(df: pd.DataFrame) -> None:
+        counts = df.groupby(["strata_id", "entity_id"])["pipeline_run_id"].nunique()
+        dupes = counts[counts > 1]
+        if not dupes.empty:
+            pairs = dupes.index.tolist()
+            raise ValueError(
+                f"2+ results: multiple pipeline_run_ids found for {mode!r} mode, "
+                f"offending pairs: {pairs}"
+            )
+
+    if mode == "today":
+        df = _run_query("DATE(created_at) = CURRENT_DATE")
+        if df.empty:
+            logger.warning(
+                "No runs found for today, falling back to most-recent",
+                extra={"run_mode": "today"},
+            )
+            fallback_filter = _RESOLUTION_SQL_MOST_RECENT_FILTER.format(
+                dagster_table=_DAGSTER_TABLE
+            )
+            df = _run_query(fallback_filter)
+            if df.empty:
+                raise ValueError(
+                    "most-recent fallback returned 0 results after today returned 0 results"
+                )
+            warnings.append({
+                "warning_type": "today_fallback",
+                "strata_id": None,
+                "entity_id": None,
+                "run_mode": "today",
+                "requested_date": "today",
+                "fallback_date": None,
+                "message": "No runs found for today; fell back to most-recent",
+            })
+        _check_duplicates(df)
+
+    elif mode == "most-recent":
+        fallback_filter = _RESOLUTION_SQL_MOST_RECENT_FILTER.format(
+            dagster_table=_DAGSTER_TABLE
+        )
+        df = _run_query(fallback_filter)
+        if df.empty:
+            raise ValueError("most-recent mode returned 0 results")
+        _check_duplicates(df)
+
+    elif mode == "date-range":
+        df = _run_query(
+            "DATE(created_at) BETWEEN %(date_from)s AND %(date_to)s",
+            params={
+                "date_from": str(run_cfg.run_mode_date_from),
+                "date_to": str(run_cfg.run_mode_date_to),
+            },
+        )
+        if df.empty:
+            raise ValueError(
+                f"date-range mode returned 0 results for "
+                f"{run_cfg.run_mode_date_from} to {run_cfg.run_mode_date_to}"
+            )
+        _check_duplicates(df)
+
+    else:
+        raise ValueError(f"Unknown run_mode: {mode!r}")
+
+    resolved = {
+        (int(row["strata_id"]), int(row["entity_id"])): row["pipeline_run_id"]
+        for _, row in df.iterrows()
+    }
+    return resolved, warnings
+
+
+def fetch_actuals(run_cfg: RunConfig) -> tuple[pd.DataFrame, list[dict]]:
+    """
+    Execute actuals.sql with the given RunConfig and return (DataFrame, warnings).
+
+    If run_cfg.collection_id is None, calls _resolve_collection_id() first to
+    auto-resolve pipeline_run_id from dagster_run_details.
+
+    Returns
+    -------
+    (df, warnings) where:
+        df: DataFrame with columns strata_id, entity_id, patient_type_rollup,
+            service_line, date, actual, mesh
+        warnings: list of warning dicts from resolution (empty if collection_id
+                  was provided directly)
     """
     sql_template = _SQL_PATH.read_text()
-
-    # Render strata_ids as comma-separated integer literals for the IN clause.
     strata_str = ", ".join(str(s) for s in run_cfg.strata_ids)
     sql = sql_template.format(strata_ids=strata_str)
 
-    params = {
-        "date_from": str(run_cfg.date_from),
-        "date_to": str(run_cfg.date_to),
-        "entity_id": run_cfg.entity_id,
-        "patient_type": run_cfg.patient_type,
-        "service_line": run_cfg.service_line,
-        "collection_id": run_cfg.collection_id,  # TODO: wire into WHERE clause once schema confirmed
-        "run_id": run_cfg.run_id,                # TODO: wire into WHERE clause once schema confirmed
-    }
-
-    logger.info(
-        "Executing actuals.sql",
-        extra={
-            "strata_ids": run_cfg.strata_ids,
-            "date_from": str(run_cfg.date_from),
-            "date_to": str(run_cfg.date_to),
-        },
-    )
+    warnings: list[dict] = []
 
     conn = _get_connection()
     try:
+        collection_id = run_cfg.collection_id
+        if collection_id is None and run_cfg.run_mode is not None:
+            resolved, warnings = _resolve_collection_id(run_cfg, conn)
+            if resolved:
+                collection_id = next(iter(resolved.values()))
+                logger.info(
+                    "Resolved collection_id from dagster_run_details",
+                    extra={"collection_id": collection_id, "run_mode": run_cfg.run_mode},
+                )
+
+        params = {
+            "date_from": str(run_cfg.date_from),
+            "date_to": str(run_cfg.date_to),
+            "entity_id": run_cfg.entity_id,
+            "patient_type": run_cfg.patient_type,
+            "service_line": run_cfg.service_line,
+            "collection_id": collection_id,
+            "run_id": run_cfg.run_id,
+        }
+
+        logger.info(
+            "Executing actuals.sql",
+            extra={
+                "strata_ids": run_cfg.strata_ids,
+                "date_from": str(run_cfg.date_from),
+                "date_to": str(run_cfg.date_to),
+                "collection_id": collection_id,
+            },
+        )
+
         cur = conn.cursor()
         cur.execute(sql, params)
         df = cur.fetch_pandas_all()
     finally:
         conn.close()
 
-    # Normalise column names to lowercase
     df.columns = [col.lower() for col in df.columns]
     df["date"] = pd.to_datetime(df["date"])
 
     logger.info("Actuals fetched", extra={"rows": len(df)})
-    return df
+    return df, warnings

@@ -68,7 +68,7 @@ WHERE
     AND (%(entity_id)s   IS NULL OR v.entity_id                = %(entity_id)s)
     AND (%(patient_type)s IS NULL OR v.patient_type_rollup_clean = %(patient_type)s)
     AND (%(service_line)s IS NULL OR v.service_line_clean       = %(service_line)s)
-    -- TODO: AND v.collection_id = %(collection_id)s
+    AND (%(collection_id)s IS NULL OR v.collection_id = %(collection_id)s)
     -- TODO: AND v.run_id        = %(run_id)s
 
 GROUP BY

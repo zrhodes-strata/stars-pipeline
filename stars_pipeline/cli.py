@@ -244,8 +244,10 @@ def main(argv: list[str] | None = None) -> int:
         },
     )
 
-    df = fetch_actuals(run_cfg)
+    df, resolution_warnings = fetch_actuals(run_cfg)
     logger.info("Snowflake pull complete", extra={"rows": len(df)})
+    # resolution_warnings written to CSV in write_warnings_csv (Task 4)
+    _ = resolution_warnings
 
     stats_df = run_monitoring(df, run_cfg, monitor_cfg)
     logger.info("STARS monitoring complete", extra={"segments": len(stats_df)})
