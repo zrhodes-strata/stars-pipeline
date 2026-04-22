@@ -17,8 +17,7 @@
 -- %(entity_id)s     Optional entity filter  (NULL = no filter)
 -- %(patient_type)s  Optional patient type filter (NULL = no filter)
 -- %(service_line)s  Optional service line filter (NULL = no filter)
--- %(collection_id)s Collection identifier — passed but not yet used in WHERE.
---                   TODO: uncomment the collection_id filter once schema confirmed.
+-- %(collection_id)s Collection identifier — NULL means no filter (pass-through).
 -- %(run_id)s        Run identifier — passed but not yet used in WHERE.
 --                   TODO: uncomment the run_id filter once schema confirmed.
 --
@@ -38,7 +37,7 @@
 --            Current assumption: prod_cv_validation_daily_volume has
 --            entity_id, patient_type_rollup_id, service_line_id columns
 --            that match prod_champion_cv_results.
--- TODO (#2): Wire collection_id and run_id into WHERE clause once schema confirmed.
+-- TODO (#2): Wire run_id into WHERE clause once schema confirmed.
 -- =============================================================================
 
 SELECT
