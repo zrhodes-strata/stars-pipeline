@@ -36,6 +36,9 @@ def test_run_config_construction():
         strata_ids=[84, 14],
         collection_id=None,
         run_id=None,
+        run_mode=None,
+        run_mode_date_from=None,
+        run_mode_date_to=None,
         date_from=date(2022, 1, 1),
         date_to=date(2026, 1, 1),
         recent_days=90,
@@ -48,3 +51,47 @@ def test_run_config_construction():
     assert cfg.strata_ids == [84, 14]
     assert cfg.recent_days == 90
     assert cfg.train_days is None
+
+
+def test_run_config_run_mode_fields():
+    cfg = RunConfig(
+        strata_ids=[84],
+        collection_id=None,
+        run_id=None,
+        run_mode="today",
+        run_mode_date_from=None,
+        run_mode_date_to=None,
+        date_from=date(2022, 1, 1),
+        date_to=date(2026, 1, 1),
+        recent_days=90,
+        train_days=None,
+        entity_id=None,
+        patient_type=None,
+        service_line=None,
+        output_path=Path("results.csv"),
+    )
+    assert cfg.run_mode == "today"
+    assert cfg.run_mode_date_from is None
+    assert cfg.run_mode_date_to is None
+
+
+def test_run_config_date_range_fields():
+    cfg = RunConfig(
+        strata_ids=[84],
+        collection_id=None,
+        run_id=None,
+        run_mode="date-range",
+        run_mode_date_from=date(2025, 1, 1),
+        run_mode_date_to=date(2025, 1, 31),
+        date_from=date(2022, 1, 1),
+        date_to=date(2026, 1, 1),
+        recent_days=90,
+        train_days=None,
+        entity_id=None,
+        patient_type=None,
+        service_line=None,
+        output_path=Path("results.csv"),
+    )
+    assert cfg.run_mode == "date-range"
+    assert cfg.run_mode_date_from == date(2025, 1, 1)
+    assert cfg.run_mode_date_to == date(2025, 1, 31)

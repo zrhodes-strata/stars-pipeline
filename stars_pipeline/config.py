@@ -37,6 +37,14 @@ class RunConfig:
         TODO: wire into actuals.sql WHERE clause once schema is confirmed.
     run_id:
         Run identifier. Same status as collection_id.
+    run_mode:
+        Run selection mode. One of "today", "most-recent", "date-range", or None.
+        None means collection_id is used directly (explicit override).
+        Default "today" when collection_id is not provided.
+    run_mode_date_from:
+        Start date for date-range mode. Also set for --run-mode-date shorthand.
+    run_mode_date_to:
+        End date for date-range mode. Also set for --run-mode-date shorthand.
     date_from:
         Start of the data pull window (inclusive).
     date_to:
@@ -63,6 +71,9 @@ class RunConfig:
     strata_ids: list[int]
     collection_id: str | None
     run_id: str | None
+    run_mode: str | None          # "today" | "most-recent" | "date-range" | None
+    run_mode_date_from: date | None
+    run_mode_date_to: date | None
     date_from: date
     date_to: date
     recent_days: int
