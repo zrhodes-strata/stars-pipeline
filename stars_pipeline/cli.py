@@ -63,21 +63,48 @@ def _build_parser() -> argparse.ArgumentParser:
         required=True,
         help="Comma-separated integer strata IDs to evaluate (e.g. 84,14,1318).",
     )
-    p.add_argument(
+    # Mutually exclusive group: either --collection-id (direct) or --run-mode (auto-resolve)
+    run_group = p.add_mutually_exclusive_group()
+    run_group.add_argument(
         "--collection-id",
         default=None,
         help=(
-            "Collection identifier. Passed to the SQL layer as a bind parameter. "
-            "TODO: wire into actuals.sql WHERE clause once schema is confirmed."
+            "Collection identifier passed directly to the SQL layer. "
+            "Mutually exclusive with --run-mode."
+        ),
+    )
+    run_group.add_argument(
+        "--run-mode",
+        choices=["today", "most-recent", "date-range"],
+        default=None,
+        help=(
+            "Auto-resolve collection_id from dagster_run_details. "
+            "Choices: today (default when --collection-id omitted), most-recent, date-range. "
+            "Mutually exclusive with --collection-id."
         ),
     )
     p.add_argument(
         "--run-id",
         default=None,
-        help=(
-            "Run identifier. Passed to the SQL layer as a bind parameter. "
-            "TODO: wire into actuals.sql WHERE clause once schema is confirmed."
-        ),
+        help="Run identifier. Passed to the SQL layer. (Not yet wired into WHERE clause.)",
+    )
+    p.add_argument(
+        "--run-mode-date",
+        default=None,
+        type=_parse_date,
+        help="Single-day shorthand for date-range mode (YYYY-MM-DD). Sets date-from == date-to.",
+    )
+    p.add_argument(
+        "--run-mode-date-from",
+        default=None,
+        type=_parse_date,
+        help="Start of range for --run-mode date-range (YYYY-MM-DD).",
+    )
+    p.add_argument(
+        "--run-mode-date-to",
+        default=None,
+        type=_parse_date,
+        help="End of range for --run-mode date-range (YYYY-MM-DD).",
     )
     p.add_argument(
         "--date-from",
@@ -139,10 +166,45 @@ def _build_run_config(args: argparse.Namespace) -> RunConfig:
         if args.output
         else Path(f"stars_results_{date_to}.csv")
     )
+
+    run_mode = args.run_mode
+    collection_id = getattr(args, "collection_id", None)
+
+    # When neither --collection-id nor --run-mode is given, default to "today"
+    if collection_id is None and run_mode is None:
+        run_mode = "today"
+
+    run_mode_date_from = None
+    run_mode_date_to = None
+
+    if run_mode == "date-range":
+        if args.run_mode_date is not None:
+            run_mode_date_from = args.run_mode_date
+            run_mode_date_to = args.run_mode_date
+        elif args.run_mode_date_from is not None and args.run_mode_date_to is not None:
+            run_mode_date_from = args.run_mode_date_from
+            run_mode_date_to = args.run_mode_date_to
+        else:
+            raise argparse.ArgumentTypeError(
+                "--run-mode date-range requires --run-mode-date or both "
+                "--run-mode-date-from and --run-mode-date-to"
+            )
+    elif run_mode in ("today", "most-recent", None):
+        if (args.run_mode_date is not None
+                or args.run_mode_date_from is not None
+                or args.run_mode_date_to is not None):
+            raise argparse.ArgumentTypeError(
+                "--run-mode-date, --run-mode-date-from, --run-mode-date-to "
+                "are only valid with --run-mode date-range"
+            )
+
     return RunConfig(
         strata_ids=strata_ids,
-        collection_id=args.collection_id,
+        collection_id=collection_id,
         run_id=args.run_id,
+        run_mode=run_mode,
+        run_mode_date_from=run_mode_date_from,
+        run_mode_date_to=run_mode_date_to,
         date_from=args.date_from,
         date_to=date_to,
         recent_days=args.recent_days,
