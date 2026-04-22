@@ -37,6 +37,7 @@ from stars_pipeline.db import fetch_actuals
 from stars_pipeline.logging_config import configure_logging, get_logger
 from stars_pipeline.stars.monitor import apply_thresholds, run_monitoring
 from stars_pipeline.stars.output import write_long_csv
+from stars_pipeline.stars.warnings import write_warnings_csv
 
 logger = get_logger(__name__)
 
@@ -246,8 +247,6 @@ def main(argv: list[str] | None = None) -> int:
 
     df, resolution_warnings = fetch_actuals(run_cfg)
     logger.info("Snowflake pull complete", extra={"rows": len(df)})
-    # resolution_warnings written to CSV in write_warnings_csv (Task 4)
-    _ = resolution_warnings
 
     stats_df = run_monitoring(df, run_cfg, monitor_cfg)
     logger.info("STARS monitoring complete", extra={"segments": len(stats_df)})
@@ -256,6 +255,8 @@ def main(argv: list[str] | None = None) -> int:
 
     write_long_csv(stats_df, run_cfg.output_path)
     logger.info("Results written", extra={"output_path": str(run_cfg.output_path)})
+
+    write_warnings_csv(resolution_warnings, run_cfg.output_path)
 
     return 0
 
