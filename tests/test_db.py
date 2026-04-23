@@ -168,6 +168,23 @@ def test_resolve_date_range_zero_results_raises():
         _resolve_collection_id(run_cfg, mock_conn)
 
 
+def test_fetch_actuals_empty_run_ids_raises(monkeypatch):
+    for var in ["SNOWFLAKE_ACCOUNT", "SNOWFLAKE_USER", "SNOWFLAKE_PASSWORD",
+                "SNOWFLAKE_WAREHOUSE", "SNOWFLAKE_DATABASE", "SNOWFLAKE_SCHEMA"]:
+        monkeypatch.setenv(var, "dummy")
+
+    # collection_id lookup returns no run_ids (all NULL)
+    dagster_rows = pd.DataFrame({"RUN_ID": pd.Series([], dtype="object")})
+    mock_cursor = MagicMock()
+    mock_cursor.fetch_pandas_all.return_value = dagster_rows
+    mock_conn = MagicMock()
+    mock_conn.cursor.return_value = mock_cursor
+
+    with patch("stars_pipeline.db._get_connection", return_value=mock_conn):
+        with pytest.raises(ValueError, match="0 run_ids"):
+            fetch_actuals(_make_run_cfg(run_mode=None, collection_id="COL123"))
+
+
 def test_fetch_actuals_returns_expected_columns(monkeypatch):
     for var in ["SNOWFLAKE_ACCOUNT", "SNOWFLAKE_USER", "SNOWFLAKE_PASSWORD",
                 "SNOWFLAKE_WAREHOUSE", "SNOWFLAKE_DATABASE", "SNOWFLAKE_SCHEMA"]:

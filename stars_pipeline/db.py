@@ -140,6 +140,7 @@ SELECT DISTINCT
     collection_id
 FROM {dagster_table}
 WHERE pipeline_run_id IN ({pipeline_run_ids})
+  AND strata_id IN ({strata_ids})
 """
 
 _MOST_RECENT_DATE_FILTER = (
@@ -203,6 +204,7 @@ def _resolve_collection_id(
         sql = _STEP_B_SQL.format(
             dagster_table=_DAGSTER_TABLE,
             pipeline_run_ids=ids_str,
+            strata_ids=strata_str,
         )
         cur = conn.cursor()
         cur.execute(sql)
@@ -324,6 +326,12 @@ def fetch_actuals(run_cfg: RunConfig) -> tuple[pd.DataFrame, list[dict]]:
 
         run_ids_str = ", ".join(f"'{rid}'" for rid in run_ids)
 
+        if not run_ids:
+            raise ValueError(
+                f"Resolution returned 0 run_ids for mode {run_cfg.run_mode!r}. "
+                "Cannot execute actuals or CV queries."
+            )
+
         # --- Step 2: actuals ---
         actuals_sql = _SQL_PATH.read_text().format(
             strata_ids=strata_str,
@@ -341,10 +349,12 @@ def fetch_actuals(run_cfg: RunConfig) -> tuple[pd.DataFrame, list[dict]]:
         # --- Step 3: CV ---
         cv_sql = _CV_SQL_PATH.read_text().format(
             strata_ids=strata_str,
-            run_ids=run_ids_str if run_ids_str else "'__no_run_ids__'",
+            run_ids=run_ids_str,
         )
         logger.info("Executing cv.sql", extra={"collection_id": collection_id})
         cur = conn.cursor()
+        # collection_id=None is passed as SQL NULL; the connector translates Python None → NULL.
+        # cv.sql uses %(collection_id)s IS NOT NULL to switch between collection_id and run_id filtering.
         cur.execute(cv_sql, {"collection_id": collection_id})
         cv_df = cur.fetch_pandas_all()
         cv_df.columns = [c.lower() for c in cv_df.columns]
