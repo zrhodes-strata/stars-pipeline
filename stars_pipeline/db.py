@@ -260,7 +260,12 @@ def fetch_actuals(run_cfg: RunConfig) -> tuple[pd.DataFrame, list[dict]]:
     """
     sql_template = _SQL_PATH.read_text()
     strata_str = ", ".join(str(s) for s in run_cfg.strata_ids)
-    sql = sql_template.format(strata_ids=strata_str)
+    # run_ids: single-quoted UUID literals for IN (...) clause.
+    # TODO (Task 4): replace with list once RunConfig carries run_ids (plural).
+    run_ids_str = (
+        f"'{run_cfg.run_id}'" if run_cfg.run_id else "''"
+    )
+    sql = sql_template.format(strata_ids=strata_str, run_ids=run_ids_str)
 
     warnings: list[dict] = []
 
