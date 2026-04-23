@@ -374,5 +374,10 @@ def fetch_actuals(run_cfg: RunConfig) -> tuple[pd.DataFrame, list[dict]]:
     ]
     df = actuals_df.merge(mesh_df, on=_SEGMENT_COLS, how="left")
 
+    df = df.rename(columns={
+        "patient_type_rollup_clean": "patient_type_rollup",
+        "service_line_clean": "service_line",
+    })
+
     logger.info("Actuals fetched", extra={"rows": len(df)})
     return df, warnings

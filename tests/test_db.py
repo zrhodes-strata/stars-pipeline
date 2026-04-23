@@ -226,7 +226,7 @@ def test_fetch_actuals_returns_expected_columns(monkeypatch):
 
     expected_cols = {
         "strata_id", "entity_id", "patient_type_rollup_id",
-        "patient_type_rollup_clean", "service_line_id", "service_line_clean",
+        "patient_type_rollup", "service_line_id", "service_line",
         "date", "actual", "row_count", "mesh",
     }
     assert expected_cols.issubset(set(df.columns))
