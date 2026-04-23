@@ -30,7 +30,6 @@ def test_defaults():
     assert cfg.recent_days == 90
     assert cfg.train_days is None
     assert cfg.collection_id is None
-    assert cfg.run_id is None
     assert cfg.output_path == Path(f"stars_results_{date.today()}.csv")
     assert cfg.run_mode == "today"
     assert cfg.run_mode_date_from is None
@@ -42,7 +41,6 @@ def test_optional_filters():
     args = parser.parse_args([
         "--strata-ids", "84",
         "--collection-id", "COL123",
-        "--run-id", "RUN456",
         "--entity-id", "E01",
         "--patient-type", "Inpatient",
         "--service-line", "Cardiology",
@@ -50,7 +48,6 @@ def test_optional_filters():
     ])
     cfg = _build_run_config(args)
     assert cfg.collection_id == "COL123"
-    assert cfg.run_id == "RUN456"
     assert cfg.entity_id == "E01"
     assert cfg.patient_type == "Inpatient"
     assert cfg.service_line == "Cardiology"

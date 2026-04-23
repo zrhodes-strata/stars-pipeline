@@ -85,11 +85,6 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     p.add_argument(
-        "--run-id",
-        default=None,
-        help="Run identifier. Passed to the SQL layer. (Not yet wired into WHERE clause.)",
-    )
-    p.add_argument(
         "--run-mode-date",
         default=None,
         type=_parse_date,
@@ -202,7 +197,6 @@ def _build_run_config(args: argparse.Namespace) -> RunConfig:
     return RunConfig(
         strata_ids=strata_ids,
         collection_id=collection_id,
-        run_id=args.run_id,
         run_mode=run_mode,
         run_mode_date_from=run_mode_date_from,
         run_mode_date_to=run_mode_date_to,

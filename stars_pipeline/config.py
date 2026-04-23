@@ -35,8 +35,6 @@ class RunConfig:
     collection_id:
         Collection identifier. Passed to the SQL layer as a bind parameter.
         TODO: wire into actuals.sql WHERE clause once schema is confirmed.
-    run_id:
-        Run identifier. Same status as collection_id.
     run_mode:
         Run selection mode. One of "today", "most-recent", "date-range", or None.
         None means collection_id is used directly (explicit override).
@@ -70,7 +68,6 @@ class RunConfig:
 
     strata_ids: list[int]
     collection_id: str | None
-    run_id: str | None
     run_mode: str | None          # "today" | "most-recent" | "date-range" | None
     run_mode_date_from: date | None
     run_mode_date_to: date | None

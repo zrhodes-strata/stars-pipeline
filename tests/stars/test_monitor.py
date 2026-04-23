@@ -13,7 +13,6 @@ def _make_run_cfg(recent_days=90, train_days=None):
     return RunConfig(
         strata_ids=[1],
         collection_id=None,
-        run_id=None,
         run_mode=None,
         run_mode_date_from=None,
         run_mode_date_to=None,

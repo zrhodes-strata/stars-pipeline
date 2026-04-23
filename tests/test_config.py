@@ -35,7 +35,7 @@ def test_run_config_construction():
     cfg = RunConfig(
         strata_ids=[84, 14],
         collection_id=None,
-        run_id=None,
+
         run_mode=None,
         run_mode_date_from=None,
         run_mode_date_to=None,
@@ -57,7 +57,7 @@ def test_run_config_run_mode_fields():
     cfg = RunConfig(
         strata_ids=[84],
         collection_id=None,
-        run_id=None,
+
         run_mode="today",
         run_mode_date_from=None,
         run_mode_date_to=None,
@@ -79,7 +79,7 @@ def test_run_config_date_range_fields():
     cfg = RunConfig(
         strata_ids=[84],
         collection_id=None,
-        run_id=None,
+
         run_mode="date-range",
         run_mode_date_from=date(2025, 1, 1),
         run_mode_date_to=date(2025, 1, 31),

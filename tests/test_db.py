@@ -13,7 +13,6 @@ def _make_run_cfg(**kwargs):
     defaults = dict(
         strata_ids=[84],
         collection_id=None,
-        run_id=None,
         run_mode="today",
         run_mode_date_from=None,
         run_mode_date_to=None,
