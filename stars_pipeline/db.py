@@ -42,6 +42,7 @@ import snowflake.connector
 
 from stars_pipeline.config import RunConfig
 from stars_pipeline.logging_config import get_logger
+from stars_pipeline.stars.mesh import compute_mesh
 
 logger = get_logger(__name__)
 
@@ -147,6 +148,14 @@ _MOST_RECENT_DATE_FILTER = (
     "WHERE launch_type = 'daily_research'"
     ")"
 )
+
+_CV_SQL_PATH = Path(__file__).parent / "sql" / "cv.sql"
+
+_COLLECTION_ID_TO_RUN_IDS_SQL = """
+SELECT DISTINCT run_id
+FROM DATALAKE_SANDBOX.PUBLIC_VOLUME_PREDICTIONS.DAGSTER_RUN_DETAILS
+WHERE collection_id = %(collection_id)s
+"""
 
 
 def _resolve_collection_id(
@@ -278,70 +287,82 @@ def _resolve_collection_id(
 
 def fetch_actuals(run_cfg: RunConfig) -> tuple[pd.DataFrame, list[dict]]:
     """
-    Execute actuals.sql with the given RunConfig and return (DataFrame, warnings).
+    Fetch daily actuals and compute segment MESH scores.
 
-    If run_cfg.collection_id is None, calls _resolve_collection_id() first to
-    auto-resolve pipeline_run_id from dagster_run_details.
+    Steps:
+      1. Resolve run_ids and collection_id (via dagster or direct collection_id lookup).
+      2. Execute actuals.sql → daily volume per segment-day.
+      3. Execute cv.sql → raw short-term CV rows.
+      4. Compute champion MESH per segment from CV rows.
+      5. Join MESH onto actuals.
 
     Returns
     -------
-    (df, warnings) where:
-        df: DataFrame with columns strata_id, entity_id, patient_type_rollup,
-            service_line, date, actual, mesh
-        warnings: list of warning dicts from resolution (empty if collection_id
-                  was provided directly)
+    (df, warnings) where df has columns:
+        strata_id, entity_id, patient_type_rollup_id, patient_type_rollup_clean,
+        service_line_id, service_line_clean, date, actual, row_count, mesh
     """
-    sql_template = _SQL_PATH.read_text()
     strata_str = ", ".join(str(s) for s in run_cfg.strata_ids)
-    # run_ids: single-quoted UUID literals for IN (...) clause.
-    # TODO (Task 4): replace with list once RunConfig carries run_ids (plural).
-    run_ids_str = (
-        f"'{run_cfg.run_id}'" if run_cfg.run_id else "''"
-    )
-    sql = sql_template.format(strata_ids=strata_str, run_ids=run_ids_str)
-
     warnings: list[dict] = []
 
     conn = _get_connection()
     try:
-        collection_id = run_cfg.collection_id
-        if collection_id is None and run_cfg.run_mode is not None:
-            resolved, warnings = _resolve_collection_id(run_cfg, conn)
-            if resolved:
-                collection_id = next(iter(resolved.values()))
-                logger.info(
-                    "Resolved collection_id from dagster_run_details",
-                    extra={"collection_id": collection_id, "run_mode": run_cfg.run_mode},
-                )
+        # --- Step 1: resolve run_ids and collection_id ---
+        if run_cfg.collection_id is not None:
+            cur = conn.cursor()
+            cur.execute(_COLLECTION_ID_TO_RUN_IDS_SQL, {"collection_id": run_cfg.collection_id})
+            lookup = cur.fetch_pandas_all()
+            lookup.columns = [c.lower() for c in lookup.columns]
+            run_ids = lookup["run_id"].dropna().unique().tolist()
+            collection_id = run_cfg.collection_id
+            logger.info(
+                "Using explicit collection_id",
+                extra={"collection_id": collection_id, "run_ids": run_ids},
+            )
+        else:
+            run_ids, collection_id, warnings = _resolve_collection_id(run_cfg, conn)
 
-        params = {
-            "date_from": str(run_cfg.date_from),
-            "date_to": str(run_cfg.date_to),
-            "entity_id": run_cfg.entity_id,
-            "patient_type": run_cfg.patient_type,
-            "service_line": run_cfg.service_line,
-            "collection_id": collection_id,
-            "run_id": run_cfg.run_id,
-        }
+        run_ids_str = ", ".join(f"'{rid}'" for rid in run_ids)
 
+        # --- Step 2: actuals ---
+        actuals_sql = _SQL_PATH.read_text().format(
+            strata_ids=strata_str,
+            run_ids=run_ids_str,
+        )
         logger.info(
             "Executing actuals.sql",
-            extra={
-                "strata_ids": run_cfg.strata_ids,
-                "date_from": str(run_cfg.date_from),
-                "date_to": str(run_cfg.date_to),
-                "collection_id": collection_id,
-            },
+            extra={"strata_ids": run_cfg.strata_ids, "run_ids": run_ids},
         )
-
         cur = conn.cursor()
-        cur.execute(sql, params)
-        df = cur.fetch_pandas_all()
+        cur.execute(actuals_sql)
+        actuals_df = cur.fetch_pandas_all()
+        actuals_df.columns = [c.lower() for c in actuals_df.columns]
+
+        # --- Step 3: CV ---
+        cv_sql = _CV_SQL_PATH.read_text().format(
+            strata_ids=strata_str,
+            run_ids=run_ids_str if run_ids_str else "'__no_run_ids__'",
+        )
+        logger.info("Executing cv.sql", extra={"collection_id": collection_id})
+        cur = conn.cursor()
+        cur.execute(cv_sql, {"collection_id": collection_id})
+        cv_df = cur.fetch_pandas_all()
+        cv_df.columns = [c.lower() for c in cv_df.columns]
+
     finally:
         conn.close()
 
-    df.columns = [col.lower() for col in df.columns]
-    df["date"] = pd.to_datetime(df["date"])
+    actuals_df["date"] = pd.to_datetime(actuals_df["date"])
+
+    # --- Step 4: MESH ---
+    mesh_df = compute_mesh(cv_df)
+
+    # --- Step 5: join ---
+    _SEGMENT_COLS = [
+        "strata_id", "entity_id", "patient_type_rollup_id",
+        "patient_type_rollup_clean", "service_line_id", "service_line_clean",
+    ]
+    df = actuals_df.merge(mesh_df, on=_SEGMENT_COLS, how="left")
 
     logger.info("Actuals fetched", extra={"rows": len(df)})
     return df, warnings
