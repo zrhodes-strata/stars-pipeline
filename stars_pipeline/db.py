@@ -120,52 +120,68 @@ def _get_connection() -> snowflake.connector.SnowflakeConnection:
     )
 
 
-_DAGSTER_TABLE = "datalake_sandbox.public_volume_predictions.dagster_run_details"
+_DAGSTER_TABLE = "DATALAKE_SANDBOX.PUBLIC_VOLUME_PREDICTIONS.DAGSTER_RUN_DETAILS"
 
-_RESOLUTION_SQL_TEMPLATE = """
-SELECT
-    strata_id,
-    PARSE_JSON(metadata):tags:cliententityid::INT AS entity_id,
-    pipeline_run_id
+_STEP_A_SQL = """
+SELECT DISTINCT pipeline_run_id
 FROM {dagster_table}
 WHERE strata_id IN ({strata_ids})
-  AND {mode_filter}
+  AND launch_type = 'daily_research'
+  AND {date_filter}
 """
 
-_RESOLUTION_SQL_MOST_RECENT_FILTER = (
-    "DATE(created_at) = (SELECT MAX(DATE(created_at)) FROM {dagster_table})"
+_STEP_B_SQL = """
+SELECT DISTINCT
+    strata_id,
+    PARSE_JSON(metadata):tags:cliententityid::INT AS entity_id,
+    pipeline_run_id,
+    run_id,
+    collection_id
+FROM {dagster_table}
+WHERE pipeline_run_id IN ({pipeline_run_ids})
+"""
+
+_MOST_RECENT_DATE_FILTER = (
+    "DATE(created_at) = ("
+    "SELECT MAX(DATE(created_at)) FROM {dagster_table} "
+    "WHERE launch_type = 'daily_research'"
+    ")"
 )
 
 
 def _resolve_collection_id(
     run_cfg: RunConfig,
     conn: snowflake.connector.SnowflakeConnection,
-) -> tuple[dict[tuple[int, int], str], list[dict]]:
+) -> tuple[list[str], str | None, list[dict]]:
     """
-    Query dagster_run_details to resolve pipeline_run_id per (strata_id, entity_id).
+    Resolve run_ids and collection_id from dagster_run_details.
+
+    Two-step process:
+      Step A: find pipeline_run_ids matching the date/mode filter.
+      Step B: expand pipeline_run_ids to run_ids and collection_id.
 
     Returns
     -------
-    (resolved, warnings) where:
-        resolved: dict mapping (strata_id, entity_id) → pipeline_run_id
-        warnings: list of warning dicts (warning_type, strata_id, entity_id,
-                  run_mode, requested_date, fallback_date, message)
+    (run_ids, collection_id, warnings) where:
+        run_ids:       distinct run_ids for use in actuals/cv SQL
+        collection_id: first non-null collection_id found; None if all null
+        warnings:      list of warning dicts
 
     Raises
     ------
     ValueError
-        If any (strata_id, entity_id) pair maps to 2+ distinct pipeline_run_ids.
-        If most-recent or date-range returns 0 total results.
+        If any (strata_id, entity_id) maps to 2+ distinct pipeline_run_ids.
+        If most-recent or date-range returns 0 pipeline_run_ids.
     """
     strata_str = ", ".join(str(s) for s in run_cfg.strata_ids)
     mode = run_cfg.run_mode
     warnings: list[dict] = []
 
-    def _run_query(mode_filter: str, params: dict | None = None) -> pd.DataFrame:
-        sql = _RESOLUTION_SQL_TEMPLATE.format(
+    def _run_step_a(date_filter: str, params: dict | None = None) -> pd.DataFrame:
+        sql = _STEP_A_SQL.format(
             dagster_table=_DAGSTER_TABLE,
             strata_ids=strata_str,
-            mode_filter=mode_filter,
+            date_filter=date_filter,
         )
         cur = conn.cursor()
         cur.execute(sql, params or {})
@@ -173,28 +189,39 @@ def _resolve_collection_id(
         df.columns = [c.lower() for c in df.columns]
         return df
 
-    def _check_duplicates(df: pd.DataFrame) -> None:
-        counts = df.groupby(["strata_id", "entity_id"])["pipeline_run_id"].nunique()
+    def _run_step_b(pipeline_run_ids: list[str]) -> pd.DataFrame:
+        ids_str = ", ".join(f"'{pid}'" for pid in pipeline_run_ids)
+        sql = _STEP_B_SQL.format(
+            dagster_table=_DAGSTER_TABLE,
+            pipeline_run_ids=ids_str,
+        )
+        cur = conn.cursor()
+        cur.execute(sql)
+        df = cur.fetch_pandas_all()
+        df.columns = [c.lower() for c in df.columns]
+        return df
+
+    def _check_duplicate_pipelines(expansion: pd.DataFrame) -> None:
+        counts = (
+            expansion.groupby(["strata_id", "entity_id"])["pipeline_run_id"]
+            .nunique()
+        )
         dupes = counts[counts > 1]
         if not dupes.empty:
             pairs = dupes.index.tolist()
             raise ValueError(
-                f"2+ results: multiple pipeline_run_ids found for {mode!r} mode, "
-                f"offending pairs: {pairs}"
+                f"2+ pipeline_run_ids found for mode {mode!r}, "
+                f"offending (strata_id, entity_id) pairs: {pairs}"
             )
 
+    most_recent_filter = _MOST_RECENT_DATE_FILTER.format(dagster_table=_DAGSTER_TABLE)
+
     if mode == "today":
-        df = _run_query("DATE(created_at) = CURRENT_DATE")
-        if df.empty:
-            logger.warning(
-                "No runs found for today, falling back to most-recent",
-                extra={"run_mode": "today"},
-            )
-            fallback_filter = _RESOLUTION_SQL_MOST_RECENT_FILTER.format(
-                dagster_table=_DAGSTER_TABLE
-            )
-            df = _run_query(fallback_filter)
-            if df.empty:
+        step_a = _run_step_a("DATE(created_at) = CURRENT_DATE")
+        if step_a.empty:
+            logger.warning("No runs found for today, falling back to most-recent")
+            step_a = _run_step_a(most_recent_filter)
+            if step_a.empty:
                 raise ValueError(
                     "most-recent fallback returned 0 results after today returned 0 results"
                 )
@@ -207,40 +234,46 @@ def _resolve_collection_id(
                 "fallback_date": None,
                 "message": "No runs found for today; fell back to most-recent",
             })
-        _check_duplicates(df)
 
     elif mode == "most-recent":
-        fallback_filter = _RESOLUTION_SQL_MOST_RECENT_FILTER.format(
-            dagster_table=_DAGSTER_TABLE
-        )
-        df = _run_query(fallback_filter)
-        if df.empty:
-            raise ValueError("most-recent mode returned 0 results")
-        _check_duplicates(df)
+        step_a = _run_step_a(most_recent_filter)
+        if step_a.empty:
+            raise ValueError("most-recent mode returned 0 pipeline_run_ids")
 
     elif mode == "date-range":
-        df = _run_query(
+        step_a = _run_step_a(
             "DATE(created_at) BETWEEN %(date_from)s AND %(date_to)s",
             params={
                 "date_from": str(run_cfg.run_mode_date_from),
                 "date_to": str(run_cfg.run_mode_date_to),
             },
         )
-        if df.empty:
+        if step_a.empty:
             raise ValueError(
-                f"date-range mode returned 0 results for "
+                f"date-range mode returned 0 pipeline_run_ids for "
                 f"{run_cfg.run_mode_date_from} to {run_cfg.run_mode_date_to}"
             )
-        _check_duplicates(df)
 
     else:
         raise ValueError(f"Unknown run_mode: {mode!r}")
 
-    resolved = {
-        (int(row["strata_id"]), int(row["entity_id"])): row["pipeline_run_id"]
-        for _, row in df.iterrows()
-    }
-    return resolved, warnings
+    pipeline_run_ids = step_a["pipeline_run_id"].tolist()
+    expansion = _run_step_b(pipeline_run_ids)
+    _check_duplicate_pipelines(expansion)
+
+    run_ids = expansion["run_id"].dropna().unique().tolist()
+    non_null_collection_ids = expansion["collection_id"].dropna()
+    collection_id = non_null_collection_ids.iloc[0] if not non_null_collection_ids.empty else None
+
+    logger.info(
+        "Resolved run_ids from dagster_run_details",
+        extra={
+            "run_ids": run_ids,
+            "collection_id": collection_id,
+            "run_mode": mode,
+        },
+    )
+    return run_ids, collection_id, warnings
 
 
 def fetch_actuals(run_cfg: RunConfig) -> tuple[pd.DataFrame, list[dict]]:

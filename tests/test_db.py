@@ -38,102 +38,88 @@ def test_missing_env_vars_raises(monkeypatch):
         _get_connection()
 
 
-def test_fetch_actuals_returns_expected_columns(monkeypatch):
-    # Set dummy env vars so _get_connection() doesn't raise
-    for var in ["SNOWFLAKE_ACCOUNT", "SNOWFLAKE_USER", "SNOWFLAKE_PASSWORD",
-                "SNOWFLAKE_WAREHOUSE", "SNOWFLAKE_DATABASE", "SNOWFLAKE_SCHEMA"]:
-        monkeypatch.setenv(var, "dummy")
+def _make_pipeline_rows(rows: list[dict]) -> pd.DataFrame:
+    """Build a fake step-A result (pipeline_run_id rows)."""
+    return pd.DataFrame(rows)
 
-    fake_df = pd.DataFrame({
-        "STRATA_ID": [84, 84],
-        "ENTITY_ID": ["E01", "E01"],
-        "PATIENT_TYPE_ROLLUP": ["Inpatient", "Inpatient"],
-        "SERVICE_LINE": ["Cardiology", "Cardiology"],
-        "DATE": ["2025-01-01", "2025-01-02"],
-        "ACTUAL": [100.0, 110.0],
-        "MESH": [2.5, 2.5],
-    })
+
+def _make_expansion_rows(rows: list[dict]) -> pd.DataFrame:
+    """Build a fake step-B result (run_id + collection_id rows)."""
+    return pd.DataFrame(rows)
+
+
+def test_resolve_today_returns_run_ids_and_collection_id():
+    run_cfg = _make_run_cfg(run_mode="today", strata_ids=[84])
+
+    step_a = _make_pipeline_rows([{"pipeline_run_id": "pipe-1"}])
+    step_b = _make_expansion_rows([
+        {"strata_id": 84, "entity_id": 1001, "pipeline_run_id": "pipe-1",
+         "run_id": "run-aaa", "collection_id": "col-xyz"},
+        {"strata_id": 84, "entity_id": 1001, "pipeline_run_id": "pipe-1",
+         "run_id": "run-bbb", "collection_id": "col-xyz"},
+    ])
 
     mock_cursor = MagicMock()
-    mock_cursor.fetch_pandas_all.return_value = fake_df
+    mock_cursor.fetch_pandas_all.side_effect = [step_a, step_b]
     mock_conn = MagicMock()
     mock_conn.cursor.return_value = mock_cursor
 
-    with patch("stars_pipeline.db._get_connection", return_value=mock_conn):
-        df, warnings = fetch_actuals(_make_run_cfg(run_mode=None, collection_id="COL123"))
+    run_ids, collection_id, warnings = _resolve_collection_id(run_cfg, mock_conn)
 
-    expected_cols = {"strata_id", "entity_id", "patient_type_rollup",
-                     "service_line", "date", "actual", "mesh"}
-    assert expected_cols.issubset(set(df.columns))
-    assert pd.api.types.is_datetime64_any_dtype(df["date"])
+    assert set(run_ids) == {"run-aaa", "run-bbb"}
+    assert collection_id == "col-xyz"
     assert warnings == []
 
 
-def _make_dagster_rows(pairs: list[tuple[int, int, str]]) -> pd.DataFrame:
-    """Build a fake dagster_run_details result. pairs = [(strata_id, entity_id, pipeline_run_id)]"""
-    return pd.DataFrame(
-        pairs, columns=["strata_id", "entity_id", "pipeline_run_id"]
-    )
-
-
-def test_resolve_today_all_pairs_found(monkeypatch):
+def test_resolve_today_null_collection_id_returns_none():
     run_cfg = _make_run_cfg(run_mode="today", strata_ids=[84])
 
-    mock_cursor = MagicMock()
-    mock_cursor.fetch_pandas_all.return_value = _make_dagster_rows([
-        (84, 1001, "run-abc"),
-        (84, 1002, "run-abc"),
+    step_a = _make_pipeline_rows([{"pipeline_run_id": "pipe-1"}])
+    step_b = _make_expansion_rows([
+        {"strata_id": 84, "entity_id": 1001, "pipeline_run_id": "pipe-1",
+         "run_id": "run-aaa", "collection_id": None},
     ])
+
+    mock_cursor = MagicMock()
+    mock_cursor.fetch_pandas_all.side_effect = [step_a, step_b]
     mock_conn = MagicMock()
     mock_conn.cursor.return_value = mock_cursor
 
-    resolved, warnings = _resolve_collection_id(run_cfg, mock_conn)
+    run_ids, collection_id, warnings = _resolve_collection_id(run_cfg, mock_conn)
 
-    assert resolved == {(84, 1001): "run-abc", (84, 1002): "run-abc"}
-    assert warnings == []
-
-
-def test_resolve_today_some_pairs_missing_logs_warning(monkeypatch):
-    run_cfg = _make_run_cfg(run_mode="today", strata_ids=[84])
-
-    mock_cursor = MagicMock()
-    mock_cursor.fetch_pandas_all.return_value = _make_dagster_rows([
-        (84, 1001, "run-abc"),
-    ])
-    mock_conn = MagicMock()
-    mock_conn.cursor.return_value = mock_cursor
-
-    resolved, warnings = _resolve_collection_id(run_cfg, mock_conn)
-
-    assert (84, 1001) in resolved
-    assert (84, 1002) not in resolved
+    assert run_ids == ["run-aaa"]
+    assert collection_id is None
     assert warnings == []
 
 
 def test_resolve_today_zero_results_falls_back_to_most_recent():
     run_cfg = _make_run_cfg(run_mode="today", strata_ids=[84])
 
-    today_df = _make_dagster_rows([])
-    most_recent_df = _make_dagster_rows([(84, 1001, "run-old")])
+    empty_step_a = _make_pipeline_rows([])
+    fallback_step_a = _make_pipeline_rows([{"pipeline_run_id": "pipe-old"}])
+    fallback_step_b = _make_expansion_rows([
+        {"strata_id": 84, "entity_id": 1001, "pipeline_run_id": "pipe-old",
+         "run_id": "run-old", "collection_id": "col-old"},
+    ])
 
     mock_cursor = MagicMock()
-    mock_cursor.fetch_pandas_all.side_effect = [today_df, most_recent_df]
+    mock_cursor.fetch_pandas_all.side_effect = [empty_step_a, fallback_step_a, fallback_step_b]
     mock_conn = MagicMock()
     mock_conn.cursor.return_value = mock_cursor
 
-    resolved, warnings = _resolve_collection_id(run_cfg, mock_conn)
+    run_ids, collection_id, warnings = _resolve_collection_id(run_cfg, mock_conn)
 
-    assert resolved == {(84, 1001): "run-old"}
+    assert run_ids == ["run-old"]
+    assert collection_id == "col-old"
     assert len(warnings) == 1
     assert warnings[0]["warning_type"] == "today_fallback"
-    assert warnings[0]["entity_id"] is None
 
 
 def test_resolve_most_recent_zero_results_raises():
     run_cfg = _make_run_cfg(run_mode="most-recent", strata_ids=[84])
 
     mock_cursor = MagicMock()
-    mock_cursor.fetch_pandas_all.return_value = _make_dagster_rows([])
+    mock_cursor.fetch_pandas_all.return_value = _make_pipeline_rows([])
     mock_conn = MagicMock()
     mock_conn.cursor.return_value = mock_cursor
 
@@ -141,38 +127,28 @@ def test_resolve_most_recent_zero_results_raises():
         _resolve_collection_id(run_cfg, mock_conn)
 
 
-def test_resolve_any_mode_duplicate_pipeline_run_id_raises():
+def test_resolve_duplicate_pipeline_run_id_per_entity_raises():
+    """Same (strata_id, entity_id) maps to two different pipeline_run_ids — not allowed."""
     run_cfg = _make_run_cfg(run_mode="today", strata_ids=[84])
 
-    mock_cursor = MagicMock()
-    mock_cursor.fetch_pandas_all.return_value = _make_dagster_rows([
-        (84, 1001, "run-aaa"),
-        (84, 1001, "run-bbb"),
+    step_a = _make_pipeline_rows([
+        {"pipeline_run_id": "pipe-1"},
+        {"pipeline_run_id": "pipe-2"},
     ])
+    step_b = _make_expansion_rows([
+        {"strata_id": 84, "entity_id": 1001, "pipeline_run_id": "pipe-1",
+         "run_id": "run-aaa", "collection_id": "col-x"},
+        {"strata_id": 84, "entity_id": 1001, "pipeline_run_id": "pipe-2",
+         "run_id": "run-bbb", "collection_id": "col-y"},
+    ])
+
+    mock_cursor = MagicMock()
+    mock_cursor.fetch_pandas_all.side_effect = [step_a, step_b]
     mock_conn = MagicMock()
     mock_conn.cursor.return_value = mock_cursor
 
-    with pytest.raises(ValueError, match="2\\+ results"):
+    with pytest.raises(ValueError, match="2\\+ pipeline_run_ids"):
         _resolve_collection_id(run_cfg, mock_conn)
-
-
-def test_resolve_date_range_missing_pair_returns_warning():
-    run_cfg = _make_run_cfg(
-        run_mode="date-range",
-        run_mode_date_from=date(2025, 1, 1),
-        run_mode_date_to=date(2025, 1, 31),
-        strata_ids=[84],
-    )
-
-    mock_cursor = MagicMock()
-    mock_cursor.fetch_pandas_all.return_value = _make_dagster_rows([
-        (84, 1001, "run-jan"),
-    ])
-    mock_conn = MagicMock()
-    mock_conn.cursor.return_value = mock_cursor
-
-    resolved, warnings = _resolve_collection_id(run_cfg, mock_conn)
-    assert (84, 1001) in resolved
 
 
 def test_resolve_date_range_zero_results_raises():
@@ -184,9 +160,59 @@ def test_resolve_date_range_zero_results_raises():
     )
 
     mock_cursor = MagicMock()
-    mock_cursor.fetch_pandas_all.return_value = _make_dagster_rows([])
+    mock_cursor.fetch_pandas_all.return_value = _make_pipeline_rows([])
     mock_conn = MagicMock()
     mock_conn.cursor.return_value = mock_cursor
 
     with pytest.raises(ValueError, match="date-range"):
         _resolve_collection_id(run_cfg, mock_conn)
+
+
+def test_fetch_actuals_returns_expected_columns(monkeypatch):
+    for var in ["SNOWFLAKE_ACCOUNT", "SNOWFLAKE_USER", "SNOWFLAKE_PASSWORD",
+                "SNOWFLAKE_WAREHOUSE", "SNOWFLAKE_DATABASE", "SNOWFLAKE_SCHEMA"]:
+        monkeypatch.setenv(var, "dummy")
+
+    # Fake dagster lookup (collection_id → run_ids)
+    dagster_rows = pd.DataFrame({"RUN_ID": ["run-aaa", "run-bbb"]})
+
+    actuals_rows = pd.DataFrame({
+        "STRATA_ID": [84, 84],
+        "ENTITY_ID": [1, 1],
+        "PATIENT_TYPE_ROLLUP_ID": [1, 1],
+        "PATIENT_TYPE_ROLLUP_CLEAN": ["IP", "IP"],
+        "SERVICE_LINE_ID": ["10", "10"],
+        "SERVICE_LINE_CLEAN": ["Cardiology", "Cardiology"],
+        "DATE": ["2025-01-01", "2025-01-02"],
+        "ACTUAL": [100.0, 110.0],
+        "ROW_COUNT": [1, 1],
+    })
+
+    cv_rows = pd.DataFrame({
+        "STRATA_ID": [84],
+        "ENTITY_ID": [1],
+        "PATIENT_TYPE_ROLLUP_ID": [1],
+        "PATIENT_TYPE_ROLLUP_CLEAN": ["IP"],
+        "SERVICE_LINE_ID": ["10"],
+        "SERVICE_LINE_CLEAN": ["Cardiology"],
+        "MODEL_NAME": ["ModelA"],
+        "PREDICTION": [95.0],
+        "ACTUAL": [100.0],
+    })
+
+    mock_cursor = MagicMock()
+    mock_cursor.fetch_pandas_all.side_effect = [dagster_rows, actuals_rows, cv_rows]
+    mock_conn = MagicMock()
+    mock_conn.cursor.return_value = mock_cursor
+
+    with patch("stars_pipeline.db._get_connection", return_value=mock_conn):
+        df, warnings = fetch_actuals(_make_run_cfg(run_mode=None, collection_id="COL123"))
+
+    expected_cols = {
+        "strata_id", "entity_id", "patient_type_rollup_id",
+        "patient_type_rollup_clean", "service_line_id", "service_line_clean",
+        "date", "actual", "row_count", "mesh",
+    }
+    assert expected_cols.issubset(set(df.columns))
+    assert pd.api.types.is_datetime64_any_dtype(df["date"])
+    assert warnings == []
