@@ -1,3 +1,13 @@
+"""
+mesh.py
+=======
+Computes champion model MESH scores from raw short-term CV output rows.
+
+Public API
+----------
+compute_mesh(cv_df) -> pd.DataFrame
+    ESH per row → MESH per (segment, model) → champion per segment.
+"""
 from __future__ import annotations
 
 import pandas as pd
