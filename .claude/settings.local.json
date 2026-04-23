@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__plugin_serena_serena__read_file",
+      "mcp__plugin_serena_serena__get_symbols_overview",
+      "mcp__plugin_serena_serena__activate_project",
+      "Bash(xargs grep *)",
+      "Bash(python3 *)",
+      "Bash(python -m pytest tests/stars/test_monitor.py::test_apply_thresholds_adds_summary_columns tests/stars/test_monitor.py::test_normal_segment_is_not_flagged tests/stars/test_monitor.py::test_violation_counts_match_flags -v)",
+      "Bash(uv run *)",
+      "Bash(uv sync *)",
+      "Bash(python *)",
+      "Bash(.venv/Scripts/pytest *)",
+      "Bash(pytest tests/stars/test_monitor.py -q)",
+      "Bash(git *)",
+      "Bash(.venv/Scripts/python *)",
+      "Bash(/c/Users/zrhodes/Repositories/stars-pipeline/.venv/Scripts/pytest tests/ -q --tb=short)",
+      "Bash(/c/Users/zrhodes/Repositories/stars-pipeline/.venv/Scripts/pytest *)",
+      "Bash(/c/Users/zrhodes/Repositories/stars-pipeline/.venv/Scripts/python *)",
+      "Bash(find \"C:/Users/zrhodes/.config/superpowers/worktrees/stars-pipeline/feat/run-selection-modes\" -name \"*.pyc\" -delete)",
+      "Bash(find \"C:/Users/zrhodes/.config/superpowers/worktrees/stars-pipeline/feat/run-selection-modes\" -name \"__pycache__\" -type d -exec rm -rf {} +)",
+      "Bash(/c/Users/zrhodes/Repositories/stars-pipeline/.venv/Scripts/pip show *)",
+      "Bash(py -m pytest tests/test_config.py tests/test_db.py -v)",
+      "Bash(uv pip *)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(pytest tests/ -v --tb=short -q)",
+      "Bash(git merge-base *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" --connect-timeout 10 \"https://STRATADECISION-STRATA.snowflakecomputing.com\")",
+      "Bash(curl *)"
+    ]
+  }
+}
