@@ -8,3 +8,7 @@ build/
 venv/
 *.csv
 *.parquet
+*.xlsx
+*.log
+*.zip
+*.tar.gz
