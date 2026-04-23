@@ -327,6 +327,11 @@ def fetch_actuals(run_cfg: RunConfig) -> tuple[pd.DataFrame, list[dict]]:
         run_ids_str = ", ".join(f"'{rid}'" for rid in run_ids)
 
         if not run_ids:
+            if run_cfg.collection_id is not None:
+                raise ValueError(
+                    f"collection_id {run_cfg.collection_id!r} returned 0 run_ids from dagster. "
+                    "Cannot execute actuals or CV queries."
+                )
             raise ValueError(
                 f"Resolution returned 0 run_ids for mode {run_cfg.run_mode!r}. "
                 "Cannot execute actuals or CV queries."

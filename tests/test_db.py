@@ -180,7 +180,7 @@ def test_fetch_actuals_empty_run_ids_raises(monkeypatch):
     mock_conn.cursor.return_value = mock_cursor
 
     with patch("stars_pipeline.db._get_connection", return_value=mock_conn):
-        with pytest.raises(ValueError, match="0 run_ids"):
+        with pytest.raises(ValueError, match="returned 0 run_ids from dagster"):
             fetch_actuals(_make_run_cfg(run_mode=None, collection_id="COL123"))
 
 
