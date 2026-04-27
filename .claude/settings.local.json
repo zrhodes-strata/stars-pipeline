@@ -26,7 +26,15 @@
       "Bash(pytest tests/ -v --tb=short -q)",
       "Bash(git merge-base *)",
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" --connect-timeout 10 \"https://STRATADECISION-STRATA.snowflakecomputing.com\")",
-      "Bash(curl *)"
+      "Bash(curl *)",
+      "Bash(cmd *)",
+      "Bash(py *)",
+      "Bash(/c/Users/zrhodes/AppData/Local/Programs/Python/Python313/python.exe *)",
+      "Bash(where python.exe)",
+      "Bash(where python3.exe)",
+      "Bash(conda run *)",
+      "Bash(conda info *)",
+      "Bash(tee test_output.txt)"
     ]
   }
 }
