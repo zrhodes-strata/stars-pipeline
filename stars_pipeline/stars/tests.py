@@ -200,12 +200,13 @@ def test_slope_change(
 
     STARS Family:       Stability
     Broken Assumption:  Not Stable — the trend direction or magnitude has changed
-    Method:             Linear regression slope ratio
+    Method:             |slope_delta| / (|slope_train| + eps)
+                        where slope_delta = slope_recent - slope_train
     Threshold:          cfg.slope_change_ratio_threshold (default 1.50)
 
-    Computes |slope_recent| / |slope_train|. A ratio > 1.50 indicates the
-    recent trend is at least 50% steeper than the historical trend.
-    Returns (nan, False) when the training slope is zero (no baseline trend).
+    Measures how large the slope *change* is relative to the training baseline.
+    A small eps prevents division by zero while still producing large ratios
+    when slope_train ≈ 0 but slope_recent is substantial.
 
     Args:
         train:  Daily volume values from the training window.
@@ -214,16 +215,15 @@ def test_slope_change(
 
     Returns:
         (slope_ratio, flag) where flag=True if ratio >= cfg.slope_change_ratio_threshold.
-        Returns (nan, False) if either array has fewer than 2 observations or
-        if the training slope is zero.
+        Returns (nan, False) if either array has fewer than 2 observations.
     """
     if len(train) < 2 or len(recent) < 2:
         return (float("nan"), False)
     slope_train = linregress(np.arange(len(train)), train).slope
     slope_recent = linregress(np.arange(len(recent)), recent).slope
-    if slope_train == 0:
-        return (float("nan"), False)
-    ratio = abs(slope_recent) / abs(slope_train)
+    eps = 1e-8
+    slope_delta = slope_recent - slope_train
+    ratio = abs(slope_delta) / (abs(slope_train) + eps)
     return (float(ratio), bool(ratio >= cfg.slope_change_ratio_threshold))
 
 
@@ -473,50 +473,54 @@ def test_volatility_shift(
 
 
 def test_outlier_rate(
-    series: np.ndarray,
+    train: np.ndarray,
+    recent: np.ndarray,
     cfg: MonitorConfig,
 ) -> tuple[float, bool]:
     """
-    Detect an excessive proportion of outlier points in the series.
+    Detect an excessive proportion of outlier points in the recent window.
 
     STARS Family:       Regularity
-    Broken Assumption:  Not Regular — extreme values dominate the series
-    Method:             MAD (Median Absolute Deviation) outlier definition,
-                        then rate = outlier_count / total_points
+    Broken Assumption:  Not Regular — extreme values dominate the recent window
+    Method:             Train-window MAD baseline; modified z-score on recent values.
+                        rate = outlier_count / len(recent)
     Threshold:          cfg.outlier_z_threshold (default 3.50) for outlier
-                        definition; cfg.outlier_rate_threshold (default 0.30)
+                        definition; cfg.outlier_rate_threshold (default 0.40)
                         for the rate gate
 
-    MAD is more robust than standard deviation for outlier detection because
-    it is not itself influenced by outliers. A point is classified as an
-    outlier when |value - median| > outlier_z_threshold * MAD.
+    The modified z-score uses the training window to establish the MAD baseline
+    (median and MAD), then applies it to the recent window. This is more robust
+    than a full-series approach because recent outliers do not inflate the baseline.
 
-    Note: This test operates on the full series (train + recent combined),
-    not on separate windows.
+    Modified z-score: 0.6745 * |value - train_median| / train_MAD
+    If train_MAD is zero, falls back to train_std as the scale.
 
     Args:
-        series: All available daily volume values for the segment.
+        train:  Daily volume values from the training window.
+        recent: Daily volume values from the recent window.
         cfg:    MonitorConfig with hard-coded thresholds.
 
     Returns:
         (outlier_rate, flag) where flag=True if rate >= cfg.outlier_rate_threshold.
-        Returns (nan, False) if series has fewer than 3 observations.
-        When MAD is zero (flat majority), any value deviating from the
-        median is counted as an outlier (series != median mask).
+        Returns (nan, False) if train has fewer than 3 observations or recent is empty.
     """
-    if len(series) < 3:
+    if len(train) < 3 or len(recent) == 0:
         return (float("nan"), False)
-    median = float(np.median(series))
-    mad = float(np.median(np.abs(series - median)))
-    if mad == 0:
-        # Flat majority: treat any value deviating from the median as an outlier.
-        # This handles series like [10, 10, ..., 1000, 1000] where MAD=0 but
-        # a meaningful fraction of values are clearly atypical.
-        outlier_mask = series != median
-        rate = float(outlier_mask.sum()) / len(series)
-        return (float(rate), bool(rate >= cfg.outlier_rate_threshold))
-    outlier_mask = np.abs(series - median) > cfg.outlier_z_threshold * mad
-    rate = float(outlier_mask.sum()) / len(series)
+    train_median = float(np.median(train))
+    train_mad = float(np.median(np.abs(train - train_median)))
+    if train_mad == 0:
+        train_std = float(train.std(ddof=1))
+        if train_std == 0:
+            # Completely flat training window: any deviation in recent is an outlier.
+            outlier_mask = recent != train_median
+            rate = float(outlier_mask.sum()) / len(recent)
+            return (float(rate), bool(rate >= cfg.outlier_rate_threshold))
+        scale = train_std / 0.6745
+    else:
+        scale = train_mad / 0.6745
+    modified_z = np.abs(recent - train_median) / scale
+    outlier_mask = modified_z > cfg.outlier_z_threshold
+    rate = float(outlier_mask.sum()) / len(recent)
     return (float(rate), bool(rate >= cfg.outlier_rate_threshold))
 
 

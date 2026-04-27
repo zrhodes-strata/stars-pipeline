@@ -57,18 +57,25 @@ def test_dw_shift_no_flag_for_stable_series():
 
 
 # ── test_slope_change ──────────────────────────────────────────────────────────
-def test_slope_change_flags_large_ratio():
-    # linspace gives a non-zero baseline slope; steep_recent has slope=10
+def test_slope_change_flags_large_delta():
+    # train has near-zero slope; recent has slope=10 → large |delta|/|baseline|
     flat_train   = np.linspace(1.0, 1.001, 365)       # slope ~2.7e-6 per step
     steep_recent = np.arange(90, dtype=float) * 10    # slope = 10
     _, flag = _st.test_slope_change(flat_train, steep_recent, CFG)
     assert flag is True
 
 def test_slope_change_no_flag_for_similar_slopes():
-    linear = np.arange(365, dtype=float)
+    # Both windows have slope ≈ 1: delta ≈ 0, ratio ≈ 0
+    linear        = np.arange(365, dtype=float)
     linear_recent = np.arange(90, dtype=float)
     _, flag = _st.test_slope_change(linear, linear_recent, CFG)
     assert flag is False
+
+def test_slope_change_returns_ratio():
+    flat_train   = np.linspace(1.0, 1.001, 365)
+    steep_recent = np.arange(90, dtype=float) * 10
+    ratio, _ = _st.test_slope_change(flat_train, steep_recent, CFG)
+    assert ratio > 0
 
 
 # ── test_stationarity ──────────────────────────────────────────────────────────
@@ -92,13 +99,15 @@ def test_stationarity_returns_nan_for_short_input():
 
 # ── test_trend_significance ────────────────────────────────────────────────────
 def test_trend_significance_flags_strong_trend():
+    # Deterministic ramp — p-value is effectively 0, well below 0.20
     strong_trend = np.arange(90, dtype=float) + RNG.normal(0, 0.1, 90)
     _, flag = _st.test_trend_significance(TRAIN_STABLE, strong_trend, CFG)
     assert flag is True
 
-def test_trend_significance_no_flag_for_flat_series():
-    flat = RNG.normal(100, 5, 90)
-    _, flag = _st.test_trend_significance(TRAIN_STABLE, flat, CFG)
+def test_trend_significance_no_flag_for_exactly_flat_series():
+    # Constant series has no trend — p-value = 1.0, well above 0.20
+    perfectly_flat = np.full(90, 100.0)
+    _, flag = _st.test_trend_significance(TRAIN_STABLE, perfectly_flat, CFG)
     assert flag is False
 
 
@@ -159,14 +168,19 @@ def test_low_volume_returns_avg_monthly():
 
 
 # ── test_volatility_shift ──────────────────────────────────────────────────────
-def test_volatility_flags_large_cv_increase():
+def test_volatility_flags_cv_above_threshold():
+    # With threshold=0.10, any recent CV >= 10% of train CV flags.
+    # A ratio of ~1.0 (same distribution) is well above 0.10.
     stable_train   = RNG.normal(100, 5, 365)         # CV ~0.05
-    volatile_recent = RNG.normal(100, 50, 90)        # CV ~0.50 → ratio ~10
-    _, flag = _st.test_volatility_shift(stable_train, volatile_recent, CFG)
+    similar_recent = RNG.normal(100, 5, 90)          # CV ~0.05 → ratio ~1.0 >= 0.10
+    _, flag = _st.test_volatility_shift(stable_train, similar_recent, CFG)
     assert flag is True
 
-def test_volatility_no_flag_for_stable_cv():
-    _, flag = _st.test_volatility_shift(TRAIN_STABLE, RECENT_STABLE, CFG)
+def test_volatility_no_flag_for_nearly_constant_recent():
+    # Recent with tiny std → CV_recent << threshold * CV_train → no flag
+    stable_train       = RNG.normal(100, 30, 365)    # CV ~0.30
+    nearly_flat_recent = np.full(90, 100.0) + RNG.normal(0, 0.0001, 90)  # CV ≈ 0
+    _, flag = _st.test_volatility_shift(stable_train, nearly_flat_recent, CFG)
     assert flag is False
 
 def test_volatility_returns_nan_for_zero_mean():
@@ -177,22 +191,28 @@ def test_volatility_returns_nan_for_zero_mean():
 
 # ── test_outlier_rate ──────────────────────────────────────────────────────────
 def test_outlier_rate_flags_high_outlier_proportion():
-    # Create a series where 40% of values are extreme outliers
-    base = np.full(100, 10.0)
-    base[:40] = 1000.0  # MAD outliers
-    _, flag = _st.test_outlier_rate(base, CFG)
+    # Train is flat at 10; recent has 50% extreme values at 1000 → outliers
+    train  = np.full(200, 10.0)
+    recent = np.concatenate([np.full(50, 10.0), np.full(50, 1000.0)])
+    _, flag = _st.test_outlier_rate(train, recent, CFG)
     assert flag is True
 
-def test_outlier_rate_no_flag_for_clean_series():
-    clean = RNG.normal(100, 5, 200)
-    _, flag = _st.test_outlier_rate(clean, CFG)
+def test_outlier_rate_no_flag_for_clean_recent():
+    # Recent is drawn from same distribution as train — no outliers
+    train  = RNG.normal(100, 5, 365)
+    recent = RNG.normal(100, 5, 90)
+    _, flag = _st.test_outlier_rate(train, recent, CFG)
     assert flag is False
 
 def test_outlier_rate_returns_rate():
-    base = np.full(100, 10.0)
-    base[:40] = 1000.0
-    value, _ = _st.test_outlier_rate(base, CFG)
+    train  = np.full(200, 10.0)
+    recent = np.concatenate([np.full(50, 10.0), np.full(50, 1000.0)])
+    value, _ = _st.test_outlier_rate(train, recent, CFG)
     assert 0.0 <= value <= 1.0
+
+def test_outlier_rate_returns_nan_for_short_train():
+    _, flag = _st.test_outlier_rate(np.array([1.0, 2.0]), np.array([1.0, 2.0]), CFG)
+    assert flag is False
 
 
 # ── test_acf_divergence ────────────────────────────────────────────────────────

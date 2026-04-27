@@ -106,16 +106,16 @@ class MonitorConfig:
         Cohen's d practical significance gate for the Welch's t-test level
         shift indicator. The Welch's t-test p-value must also pass ``alpha``
         before Cohen's d is evaluated.
-        Flag when Cohen's d >= 1.00 (large effect size).
+        Flag when Cohen's d >= 1.15 (large effect size).
 
     dw_delta_threshold
         Absolute change in the OLS Durbin-Watson statistic between the
         training and recent windows. Measures residual autocorrelation shift.
-        Flag when |DW_recent - DW_train| >= 1.15.
+        Flag when |DW_recent - DW_train| >= 1.50.
 
     slope_change_ratio_threshold
-        Ratio of the recent linear regression slope magnitude to the
-        training slope magnitude: |slope_recent| / |slope_train|.
+        Ratio of the slope change to the training slope magnitude:
+        |slope_recent - slope_train| / (|slope_train| + eps).
         Flag when ratio >= 1.50.
 
     kpss_alpha
@@ -126,14 +126,14 @@ class MonitorConfig:
 
     trend_p_value_threshold
         Linear regression p-value threshold for trend change significance.
-        Flag when the recent window's trend p-value < 0.05.
+        Flag when the recent window's trend p-value < 0.20.
 
     Truthfulness
     ~~~~~~~~~~~~
     coverage_delta_threshold
         Minimum absolute shift in coverage rate (proportion of non-missing
         days) required to flag, after the two-proportion z-test passes alpha.
-        Flag when |coverage_recent - coverage_train| >= 0.30.
+        Flag when |coverage_recent - coverage_train| >= 0.40.
 
     sparsity_delta_threshold
         Minimum absolute shift in sparsity rate (proportion of zero-value
@@ -150,15 +150,15 @@ class MonitorConfig:
     ~~~~~~~~~~
     volatility_ratio_threshold
         Coefficient of variation ratio: (sigma/mu)_recent / (sigma/mu)_train.
-        Flag when CV ratio >= 3.50.
+        Flag when CV ratio >= 0.10.
 
     outlier_z_threshold
         MAD multiplier defining an outlier: a point is an outlier when
         |value - median| > outlier_z_threshold * MAD.
 
     outlier_rate_threshold
-        Maximum acceptable fraction of outlier points in the series.
-        Flag when outlier_count / total_points >= 0.30.
+        Maximum acceptable fraction of outlier points in the recent window.
+        Flag when outlier_count / len(recent) >= 0.40.
 
     acf_divergence_p_threshold
         Fisher Z-transform p-value threshold for ACF lag-1 divergence.
@@ -174,23 +174,23 @@ class MonitorConfig:
 
     # ── Stability ─────────────────────────────────────────────────────────────
     ks_d_threshold: float = 0.30
-    level_shift_min_cohen_d: float = 1.00
-    dw_delta_threshold: float = 1.15
+    level_shift_min_cohen_d: float = 1.15
+    dw_delta_threshold: float = 1.50
     slope_change_ratio_threshold: float = 1.50
     kpss_alpha: float = 0.10
-    trend_p_value_threshold: float = 0.05
+    trend_p_value_threshold: float = 0.20
 
     # ── Truthfulness ──────────────────────────────────────────────────────────
-    coverage_delta_threshold: float = 0.30
+    coverage_delta_threshold: float = 0.40
     sparsity_delta_threshold: float = 0.30
 
     # ── Abundance ─────────────────────────────────────────────────────────────
     low_volume_monthly_threshold: float = 3.00
 
     # ── Regularity ────────────────────────────────────────────────────────────
-    volatility_ratio_threshold: float = 3.50
+    volatility_ratio_threshold: float = 0.10
     outlier_z_threshold: float = 3.50
-    outlier_rate_threshold: float = 0.30
+    outlier_rate_threshold: float = 0.40
     acf_divergence_p_threshold: float = 0.05
 
     # ── Global ────────────────────────────────────────────────────────────────

@@ -137,9 +137,9 @@ def run_monitoring(
         recent_vals  = values[recent_mask].values
         train_pres   = present[train_mask].values
         recent_pres  = present[recent_mask].values
-        train_zero   = zero[train_mask].values
-        recent_zero  = zero[recent_mask].values
-        all_vals     = values.values  # full series for outlier test
+        # Sparsity uses only observed days: zeros among present days, denominator = observed count.
+        train_zero   = zero[train_mask & present].values
+        recent_zero  = zero[recent_mask & present].values
 
         row: dict = {
             **keys_dict,
@@ -164,7 +164,7 @@ def run_monitoring(
 
         # ── Regularity ───────────────────────────────────────────────────────
         row["volatility_shift_value"],  row["volatility_shift_flag"]  = test_volatility_shift(train_vals, recent_vals, monitor_cfg)
-        row["outlier_rate_value"],      row["outlier_rate_flag"]      = test_outlier_rate(all_vals, monitor_cfg)
+        row["outlier_rate_value"],      row["outlier_rate_flag"]      = test_outlier_rate(train_vals, recent_vals, monitor_cfg)
         row["acf_divergence_value"],    row["acf_divergence_flag"]    = test_acf_divergence(train_vals, recent_vals, monitor_cfg)
         row["dow_pattern_shift_value"], row["dow_pattern_shift_flag"] = test_dow_pattern_shift(train_vals, recent_vals, monitor_cfg)
 
