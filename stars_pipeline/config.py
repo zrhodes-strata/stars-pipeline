@@ -116,7 +116,12 @@ class MonitorConfig:
     slope_change_ratio_threshold
         Ratio of the slope change to the training slope magnitude:
         |slope_recent - slope_train| / (|slope_train| + eps).
-        Flag when ratio >= 1.50.
+        Flag when ratio >= 1.50 (one of three gates in test_trend_change).
+
+    slope_threshold
+        Minimum absolute slope magnitude gate in test_trend_change.
+        Prevents flagging near-flat series where a ratio is meaningless.
+        Flag requires max(|slope_train|, |slope_recent|) >= 0.05.
 
     kpss_alpha
         Significance level for the KPSS stationarity test.
@@ -150,7 +155,8 @@ class MonitorConfig:
     ~~~~~~~~~~
     volatility_ratio_threshold
         Coefficient of variation ratio: (sigma/mu)_recent / (sigma/mu)_train.
-        Flag when CV ratio >= 0.10.
+        Bidirectional: flag when cv_ratio >= 1.50 (volatility increased)
+        OR cv_ratio <= 1/1.50 (volatility collapsed).
 
     outlier_z_threshold
         MAD multiplier defining an outlier: a point is an outlier when
@@ -177,6 +183,7 @@ class MonitorConfig:
     level_shift_min_cohen_d: float = 1.15
     dw_delta_threshold: float = 1.50
     slope_change_ratio_threshold: float = 1.50
+    slope_threshold: float = 0.05
     kpss_alpha: float = 0.10
     trend_p_value_threshold: float = 0.20
 
@@ -188,7 +195,7 @@ class MonitorConfig:
     low_volume_monthly_threshold: float = 3.00
 
     # ── Regularity ────────────────────────────────────────────────────────────
-    volatility_ratio_threshold: float = 0.10
+    volatility_ratio_threshold: float = 1.50
     outlier_z_threshold: float = 3.50
     outlier_rate_threshold: float = 0.40
     acf_divergence_p_threshold: float = 0.05

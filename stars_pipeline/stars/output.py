@@ -34,19 +34,17 @@ logger = get_logger(__name__)
 
 # Maps metric name → STARS family for the output rows
 _METRIC_FAMILY: dict[str, str] = {
-    "ks_distribution":     "Stability",
-    "level_shift":         "Stability",
-    "dw_shift":            "Stability",
-    "slope_change_ratio":  "Stability",
-    "stationarity":        "Stability",
-    "trend_significance":  "Stability",
-    "coverage_shift":      "Truthfulness",
-    "sparsity_change":     "Truthfulness",
-    "low_volume":          "Abundance",
-    "volatility_shift":    "Regularity",
-    "outlier_rate":        "Regularity",
-    "acf_divergence":      "Regularity",
-    "dow_pattern_shift":   "Regularity",
+    "ks_distribution": "Stability",
+    "level_shift":     "Stability",
+    "dw_shift":        "Stability",
+    "trend_change":    "Stability",
+    "stationarity":    "Stability",
+    "coverage_shift":  "Truthfulness",
+    "sparsity_change": "Truthfulness",
+    "low_volume":      "Abundance",
+    "volatility_shift": "Regularity",
+    "outlier_rate":    "Regularity",
+    "acf_structure":   "Regularity",
 }
 
 _ID_COLS = ("strata_id", "entity_id", "patient_type_rollup", "service_line", "feature_segment")

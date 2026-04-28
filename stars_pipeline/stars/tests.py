@@ -31,8 +31,9 @@ from __future__ import annotations
 import warnings
 
 import numpy as np
+import pandas as pd
 import statsmodels.api as sm
-from scipy.stats import ks_2samp, linregress, norm, ttest_ind
+from scipy.stats import ks_2samp, norm, ttest_ind
 from statsmodels.stats.proportion import proportions_ztest
 from statsmodels.tools.sm_exceptions import InterpolationWarning
 from statsmodels.tsa.stattools import acf, kpss
@@ -85,9 +86,9 @@ def test_ks_distribution(
     Method:             Kolmogorov-Smirnov two-sample test
     Threshold:          cfg.ks_d_threshold (default 0.30)
 
-    The KS statistic measures the maximum absolute difference between the
-    empirical CDFs of the two samples. A large KS statistic indicates the
-    two windows are drawn from different distributions.
+    Both the KS statistic gate (stat >= threshold) and the p-value gate
+    (p < alpha) must pass. The p-value gate eliminates spurious large-D
+    values that arise when one window is very short.
 
     Args:
         train:  Daily volume values from the training window.
@@ -95,13 +96,13 @@ def test_ks_distribution(
         cfg:    MonitorConfig with hard-coded thresholds.
 
     Returns:
-        (ks_statistic, flag) where flag=True if ks_statistic >= cfg.ks_d_threshold.
-        Returns (nan, False) if either array has fewer than 2 observations.
+        (ks_statistic, flag) where flag=True if stat >= cfg.ks_d_threshold AND p < cfg.alpha.
+        Returns (nan, False) if either array has fewer than 10 observations.
     """
-    if len(train) < 2 or len(recent) < 2:
+    if len(train) < 10 or len(recent) < 10:
         return (float("nan"), False)
-    stat, _ = ks_2samp(train, recent)
-    return (float(stat), bool(stat >= cfg.ks_d_threshold))
+    stat, p = ks_2samp(train, recent)
+    return (float(stat), bool(stat >= cfg.ks_d_threshold and p < cfg.alpha))
 
 
 def test_level_shift(
@@ -190,23 +191,25 @@ def test_dw_shift(
     return (float(delta), bool(delta >= cfg.dw_delta_threshold))
 
 
-def test_slope_change(
+def test_trend_change(
     train: np.ndarray,
     recent: np.ndarray,
     cfg: MonitorConfig,
 ) -> tuple[float, bool]:
     """
-    Detect a disproportionate change in trend slope between windows.
+    Detect a statistically significant change in trend slope between windows.
 
     STARS Family:       Stability
-    Broken Assumption:  Not Stable — the trend direction or magnitude has changed
-    Method:             |slope_delta| / (|slope_train| + eps)
-                        where slope_delta = slope_recent - slope_train
-    Threshold:          cfg.slope_change_ratio_threshold (default 1.50)
-
-    Measures how large the slope *change* is relative to the training baseline.
-    A small eps prevents division by zero while still producing large ratios
-    when slope_train ≈ 0 but slope_recent is substantial.
+    Broken Assumption:  Not Stable — the trend has shifted between training and recent
+    Method:             Interaction-term OLS on the combined series:
+                            y ~ 1 + t + recent_ind + (t × recent_ind)
+                        The interaction term coefficient is slope_delta; its p-value
+                        tests whether the slope has changed significantly.
+    Threshold:          Three gates must ALL pass (matching old pipeline):
+                        1. p_value < cfg.trend_p_value_threshold (default 0.20)
+                        2. max(|slope_train|, |slope_recent|) >= cfg.slope_threshold
+                           (excludes near-flat series where a ratio is meaningless)
+                        3. |slope_delta| / (|slope_train| + eps) >= cfg.slope_change_ratio_threshold
 
     Args:
         train:  Daily volume values from the training window.
@@ -214,17 +217,44 @@ def test_slope_change(
         cfg:    MonitorConfig with hard-coded thresholds.
 
     Returns:
-        (slope_ratio, flag) where flag=True if ratio >= cfg.slope_change_ratio_threshold.
-        Returns (nan, False) if either array has fewer than 2 observations.
+        (p_value, flag). Returns (nan, False) if either window has fewer than
+        10 observations.
     """
-    if len(train) < 2 or len(recent) < 2:
+    if len(train) < 10 or len(recent) < 10:
         return (float("nan"), False)
-    slope_train = linregress(np.arange(len(train)), train).slope
-    slope_recent = linregress(np.arange(len(recent)), recent).slope
-    eps = 1e-8
-    slope_delta = slope_recent - slope_train
-    ratio = abs(slope_delta) / (abs(slope_train) + eps)
-    return (float(ratio), bool(ratio >= cfg.slope_change_ratio_threshold))
+
+    t_train = np.arange(len(train), dtype=float)
+    t_recent = np.arange(len(recent), dtype=float) + len(train)
+    t_all = np.concatenate([t_train, t_recent])
+    y_all = np.concatenate([train, recent]).astype(float)
+    ind = np.concatenate([np.zeros(len(train)), np.ones(len(recent))])
+    t_x_ind = t_all * ind
+
+    X = sm.add_constant(
+        np.column_stack([t_all, ind, t_x_ind]),
+        has_constant="add",
+    )
+    try:
+        result = sm.OLS(y_all, X).fit()
+    except Exception:
+        return (float("nan"), False)
+
+    # params order: const, t, recent_ind, t_x_recent_ind
+    slope_train = float(result.params[1])
+    slope_delta = float(result.params[3])
+    slope_recent = slope_train + slope_delta
+    p_val = float(result.pvalues[3])
+
+    eps = 1e-9
+    slope_change_ratio = abs(slope_delta) / (abs(slope_train) + eps)
+    max_slope = max(abs(slope_train), abs(slope_recent))
+
+    flag = bool(
+        p_val < cfg.trend_p_value_threshold
+        and max_slope >= cfg.slope_threshold
+        and slope_change_ratio >= cfg.slope_change_ratio_threshold
+    )
+    return (float(p_val), flag)
 
 
 def test_stationarity(
@@ -258,7 +288,7 @@ def test_stationarity(
         Returns (nan, False) if either array has fewer than 10 observations
         (KPSS requires sufficient data to be reliable).
     """
-    if len(train) < 10 or len(recent) < 10:
+    if len(train) < 30 or len(recent) < 30:
         return (float("nan"), False)
     try:
         with warnings.catch_warnings():
@@ -272,38 +302,6 @@ def test_stationarity(
     return (float(stat_recent), bool(train_stationary and recent_nonstationary))
 
 
-def test_trend_significance(
-    train: np.ndarray,
-    recent: np.ndarray,
-    cfg: MonitorConfig,
-) -> tuple[float, bool]:
-    """
-    Detect a statistically significant linear trend in the recent window.
-
-    STARS Family:       Stability
-    Broken Assumption:  Not Stable — a significant new trend has emerged recently
-    Method:             Linear regression OLS p-value on the recent window
-    Threshold:          cfg.trend_p_value_threshold (default 0.05)
-
-    Unlike test_slope_change (which compares train vs recent magnitude),
-    this test asks whether the recent window has a trend that is statistically
-    distinguishable from a flat line — regardless of what the training trend was.
-
-    Args:
-        train:  Daily volume values from the training window (unused in computation;
-                included for interface consistency with other test functions).
-        recent: Daily volume values from the recent window.
-        cfg:    MonitorConfig with hard-coded thresholds.
-
-    Returns:
-        (p_value, flag) where flag=True if p_value < cfg.trend_p_value_threshold.
-        Returns (nan, False) if recent has fewer than 3 observations.
-    """
-    if len(recent) < 3:
-        return (float("nan"), False)
-    result = linregress(np.arange(len(recent), dtype=float), recent)
-    p_value = float(result.pvalue)
-    return (p_value, bool(p_value < cfg.trend_p_value_threshold))
 
 
 # ── Truthfulness ──────────────────────────────────────────────────────────────
@@ -400,6 +398,7 @@ def test_sparsity_change(
 
 def test_low_volume(
     train: np.ndarray,
+    train_dates: pd.DatetimeIndex,
     cfg: MonitorConfig,
 ) -> tuple[float, bool]:
     """
@@ -407,16 +406,17 @@ def test_low_volume(
 
     STARS Family:       Abundance
     Broken Assumption:  Not Abundant — too few observations to infer patterns
-    Method:             Average monthly volume (assumes 30.44 days/month)
+    Method:             Mean of per-calendar-month totals in the training window
     Threshold:          cfg.low_volume_monthly_threshold (default 3.0 per month)
 
-    Converts the total training volume to an average monthly rate and flags
-    when this rate is below the threshold. Note: ``train`` should contain
-    the raw daily volume values (not just presence indicators).
+    Groups daily values by calendar month, sums each month, then takes the
+    mean across months. This matches the old pipeline's _avg_monthly_volume
+    exactly and handles irregular coverage correctly.
 
     Args:
-        train: Daily volume values from the training window.
-        cfg:   MonitorConfig with hard-coded thresholds.
+        train:       Daily volume values from the training window (observed days only).
+        train_dates: DatetimeIndex aligned with ``train`` (same length).
+        cfg:         MonitorConfig with hard-coded thresholds.
 
     Returns:
         (avg_monthly_volume, flag) where flag=True if avg_monthly < threshold.
@@ -424,7 +424,12 @@ def test_low_volume(
     """
     if len(train) == 0:
         return (float("nan"), True)
-    avg_monthly = float(train.mean()) * 30.44
+    monthly = (
+        pd.Series(train, index=train_dates)
+        .groupby(train_dates.to_period("M"))
+        .sum()
+    )
+    avg_monthly = float(monthly.mean())
     return (float(avg_monthly), bool(avg_monthly < cfg.low_volume_monthly_threshold))
 
 
@@ -437,17 +442,17 @@ def test_volatility_shift(
     cfg: MonitorConfig,
 ) -> tuple[float, bool]:
     """
-    Detect a disproportionate increase in relative variability (CV ratio).
+    Detect a disproportionate shift in relative variability (CV ratio).
 
     STARS Family:       Regularity
-    Broken Assumption:  Not Regular — the series has become much more volatile
+    Broken Assumption:  Not Regular — the series variability has shifted materially
     Method:             Coefficient of Variation ratio:
-                        (sigma/mu)_recent / (sigma/mu)_train
-    Threshold:          cfg.volatility_ratio_threshold (default 3.50)
+                        cv_ratio = (sigma/mu)_recent / (sigma/mu)_train
+    Threshold:          cfg.volatility_ratio_threshold (default 1.50)
 
-    The CV (sigma/mu) normalises variability by the mean, making the ratio
-    scale-independent. A ratio of 3.5 means the recent window is 3.5x more
-    variable relative to its mean than the training window was.
+    Bidirectional: flags when variability has increased (cv_ratio >= threshold)
+    OR collapsed (cv_ratio <= 1/threshold). A near-zero mean makes CV unstable
+    and returns (nan, False).
 
     Args:
         train:  Daily volume values from the training window.
@@ -455,21 +460,20 @@ def test_volatility_shift(
         cfg:    MonitorConfig with hard-coded thresholds.
 
     Returns:
-        (cv_ratio, flag) where flag=True if cv_ratio >= cfg.volatility_ratio_threshold.
-        Returns (nan, False) if either array has fewer than 2 observations,
-        or if either mean is zero (CV undefined).
+        (cv_ratio, flag). Returns (nan, False) if either array has fewer than
+        10 observations or if either mean is near zero (|mean| < 1e-6).
     """
-    if len(train) < 2 or len(recent) < 2:
+    if len(train) < 10 or len(recent) < 10:
         return (float("nan"), False)
     mean_train, mean_recent = train.mean(), recent.mean()
-    if mean_train == 0 or mean_recent == 0:
+    if abs(mean_train) < 1e-6 or abs(mean_recent) < 1e-6:
         return (float("nan"), False)
     cv_train = train.std(ddof=1) / abs(mean_train)
     cv_recent = recent.std(ddof=1) / abs(mean_recent)
-    if cv_train == 0:
-        return (float("nan"), False)
-    ratio = cv_recent / cv_train
-    return (float(ratio), bool(ratio >= cfg.volatility_ratio_threshold))
+    eps = 1e-9
+    ratio = cv_recent / (cv_train + eps)
+    thr = cfg.volatility_ratio_threshold
+    return (float(ratio), bool(ratio >= thr or ratio <= 1.0 / thr))
 
 
 def test_outlier_rate(
@@ -524,24 +528,31 @@ def test_outlier_rate(
     return (float(rate), bool(rate >= cfg.outlier_rate_threshold))
 
 
-def test_acf_divergence(
+_ACF_STRUCTURE_LAGS: tuple[int, ...] = (1, 7, 30)
+
+
+def test_acf_structure(
     train: np.ndarray,
     recent: np.ndarray,
     cfg: MonitorConfig,
 ) -> tuple[float, bool]:
     """
-    Detect a significant change in lag-1 autocorrelation structure.
+    Detect divergence in autocorrelation structure across lags 1, 7, and 30.
 
     STARS Family:       Regularity
-    Broken Assumption:  Not Regular — the short-term autocorrelation pattern
-                        has changed (predictable regularities have been lost
-                        or new ones introduced)
-    Method:             Fisher Z-transform test comparing lag-1 ACF between
-                        training and recent windows
+    Broken Assumption:  Not Regular — temporal patterns the model relied on are gone
+    Method:             For each lag in (1, 7, 30):
+                          1. Compute ACF for train and recent windows.
+                          2. Check whether the training ACF is significant via the
+                             Bartlett bound: |acf_train| > 1.96 / sqrt(n_train).
+                          3. If significant in train, apply Fisher Z-transform test
+                             to check divergence (p < cfg.acf_divergence_p_threshold).
+                        Flag fires when at least one lag is significant in train
+                        AND has diverged significantly in recent.
     Threshold:          cfg.acf_divergence_p_threshold (default 0.05)
 
-    The lag-1 ACF captures how much each day predicts the next. A significant
-    shift suggests the series' short-term dependence structure has changed.
+    Only lags significant in the training window are tested — this prevents
+    false positives from lags that were never meaningful to begin with.
 
     Args:
         train:  Daily volume values from the training window.
@@ -549,49 +560,44 @@ def test_acf_divergence(
         cfg:    MonitorConfig with hard-coded thresholds.
 
     Returns:
-        (p_value, flag) where flag=True if p_value < cfg.acf_divergence_p_threshold.
-        Returns (nan, False) if either array has fewer than 5 observations.
+        (min_divergence_p, flag) where flag=True if any lag diverged.
+        min_divergence_p is the smallest p-value across tested lags (nan if none tested).
+        Returns (nan, False) if either array has fewer than 10 observations.
     """
-    if len(train) < 5 or len(recent) < 5:
+    if len(train) < 10 or len(recent) < 10:
         return (float("nan"), False)
-    acf_train = float(acf(train, nlags=1, fft=False)[1])
-    acf_recent = float(acf(recent, nlags=1, fft=False)[1])
-    p_value = _fisher_z_test(acf_train, len(train), acf_recent, len(recent))
-    return (float(p_value), bool(p_value < cfg.acf_divergence_p_threshold))
 
+    n_train, n_recent = len(train), len(recent)
+    max_lag = max(_ACF_STRUCTURE_LAGS)
+    train_nlags = min(max_lag, n_train - 1)
+    recent_nlags = min(max_lag, n_recent - 1)
 
-def test_dow_pattern_shift(
-    train: np.ndarray,
-    recent: np.ndarray,
-    cfg: MonitorConfig,
-) -> tuple[float, bool]:
-    """
-    Detect a significant change in day-of-week autocorrelation (lag-7 ACF).
+    try:
+        acf_train_vals = acf(train, nlags=train_nlags, fft=True)
+    except Exception:
+        acf_train_vals = np.full(train_nlags + 1, np.nan)
+    try:
+        acf_recent_vals = acf(recent, nlags=recent_nlags, fft=True)
+    except Exception:
+        acf_recent_vals = np.full(recent_nlags + 1, np.nan)
 
-    STARS Family:       Regularity
-    Broken Assumption:  Not Regular — the weekly seasonal pattern has changed
-    Method:             Fisher Z-transform test comparing lag-7 ACF between
-                        training and recent windows
-    Threshold:          cfg.acf_divergence_p_threshold (default 0.05)
-                        (reused — no separate threshold needed)
+    bartlett_bound = 1.96 / np.sqrt(n_train)
+    min_p = float("nan")
+    any_diverged = False
 
-    Lag-7 ACF captures weekly periodicity. A significant shift in lag-7 ACF
-    between train and recent windows indicates the day-of-week pattern has
-    changed — e.g., weekday/weekend volume ratios have shifted.
+    for lag in _ACF_STRUCTURE_LAGS:
+        r_train = float(acf_train_vals[lag]) if lag <= train_nlags and np.isfinite(acf_train_vals[lag]) else float("nan")
+        r_recent = float(acf_recent_vals[lag]) if lag <= recent_nlags and np.isfinite(acf_recent_vals[lag]) else float("nan")
 
-    Args:
-        train:  Daily volume values from the training window.
-        recent: Daily volume values from the recent window.
-        cfg:    MonitorConfig with hard-coded thresholds.
+        if np.isnan(r_train) or np.isnan(r_recent):
+            continue
+        if abs(r_train) <= bartlett_bound:
+            continue  # training window showed no significant pattern at this lag
 
-    Returns:
-        (p_value, flag) where flag=True if p_value < cfg.acf_divergence_p_threshold.
-        Returns (nan, False) if either array has fewer than 14 observations
-        (need at least 2 full weeks for lag-7 to be meaningful).
-    """
-    if len(train) < 14 or len(recent) < 14:
-        return (float("nan"), False)
-    acf_train_7 = float(acf(train, nlags=7, fft=False)[7])
-    acf_recent_7 = float(acf(recent, nlags=7, fft=False)[7])
-    p_value = _fisher_z_test(acf_train_7, len(train), acf_recent_7, len(recent))
-    return (float(p_value), bool(p_value < cfg.acf_divergence_p_threshold))
+        p = _fisher_z_test(r_train, n_train, r_recent, n_recent)
+        if np.isnan(min_p) or p < min_p:
+            min_p = p
+        if p < cfg.acf_divergence_p_threshold:
+            any_diverged = True
+
+    return (float(min_p), any_diverged)

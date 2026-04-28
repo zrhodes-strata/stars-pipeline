@@ -14,19 +14,17 @@ def _make_stats_row(**overrides):
         "service_line": "Cardiology",
         "feature_segment": "84|E01|Inpatient|Cardiology",
         "mesh": 2.5,
-        "ks_distribution_value": 0.10,   "ks_distribution_flag": False,
-        "level_shift_value": 0.50,       "level_shift_flag": False,
-        "dw_shift_value": 0.40,          "dw_shift_flag": False,
-        "slope_change_ratio_value": 0.8, "slope_change_ratio_flag": False,
-        "stationarity_value": 0.15,      "stationarity_flag": False,
-        "trend_significance_value": 0.3, "trend_significance_flag": False,
-        "coverage_shift_value": 0.02,    "coverage_shift_flag": False,
-        "sparsity_change_value": 0.01,   "sparsity_change_flag": False,
-        "low_volume_value": 50.0,        "low_volume_flag": False,
-        "volatility_shift_value": 1.1,   "volatility_shift_flag": False,
-        "outlier_rate_value": 0.02,      "outlier_rate_flag": False,
-        "acf_divergence_value": 0.3,     "acf_divergence_flag": False,
-        "dow_pattern_shift_value": 0.2,  "dow_pattern_shift_flag": False,
+        "ks_distribution_value": 0.10,  "ks_distribution_flag": False,
+        "level_shift_value": 0.50,      "level_shift_flag": False,
+        "dw_shift_value": 0.40,         "dw_shift_flag": False,
+        "trend_change_value": 0.15,     "trend_change_flag": False,
+        "stationarity_value": 0.15,     "stationarity_flag": False,
+        "coverage_shift_value": 0.02,   "coverage_shift_flag": False,
+        "sparsity_change_value": 0.01,  "sparsity_change_flag": False,
+        "low_volume_value": 50.0,       "low_volume_flag": False,
+        "volatility_shift_value": 1.1,  "volatility_shift_flag": False,
+        "outlier_rate_value": 0.02,     "outlier_rate_flag": False,
+        "acf_structure_value": 0.3,     "acf_structure_flag": False,
         # New summary columns from apply_thresholds()
         "is_flagged": False,
         "stability_violations": 0,
@@ -48,11 +46,11 @@ def test_long_format_has_correct_columns():
     }
 
 
-def test_long_format_has_18_rows_per_segment():
+def test_long_format_has_16_rows_per_segment():
     stats = _make_stats_row()
     result = to_long_format(stats)
-    # 13 indicators + 5 summary rows
-    assert len(result) == 18
+    # 11 indicators + 5 summary rows
+    assert len(result) == 16
 
 
 def test_long_format_metric_names_include_new_summaries():
@@ -132,4 +130,4 @@ def test_write_long_csv_creates_file(tmp_path):
     write_long_csv(stats, out)
     assert out.exists()
     df = pd.read_csv(out)
-    assert len(df) == 18
+    assert len(df) == 16

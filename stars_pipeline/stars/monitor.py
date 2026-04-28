@@ -32,18 +32,16 @@ import pandas as pd
 from stars_pipeline.config import MonitorConfig, RunConfig
 from stars_pipeline.logging_config import get_logger
 from stars_pipeline.stars.tests import (
-    test_acf_divergence,
+    test_acf_structure,
     test_coverage_shift,
-    test_dow_pattern_shift,
     test_dw_shift,
     test_ks_distribution,
     test_level_shift,
     test_low_volume,
     test_outlier_rate,
-    test_slope_change,
     test_sparsity_change,
     test_stationarity,
-    test_trend_significance,
+    test_trend_change,
     test_volatility_shift,
 )
 
@@ -135,6 +133,7 @@ def run_monitoring(
 
         train_vals   = values[train_mask].values
         recent_vals  = values[recent_mask].values
+        train_dates  = dates[train_mask]
         train_pres   = present[train_mask].values
         recent_pres  = present[recent_mask].values
         # Sparsity uses only observed days: zeros among present days, denominator = observed count.
@@ -148,25 +147,23 @@ def run_monitoring(
         }
 
         # ── Stability ────────────────────────────────────────────────────────
-        row["ks_distribution_value"],    row["ks_distribution_flag"]    = test_ks_distribution(train_vals, recent_vals, monitor_cfg)
-        row["level_shift_value"],        row["level_shift_flag"]        = test_level_shift(train_vals, recent_vals, monitor_cfg)
-        row["dw_shift_value"],           row["dw_shift_flag"]           = test_dw_shift(train_vals, recent_vals, monitor_cfg)
-        row["slope_change_ratio_value"], row["slope_change_ratio_flag"] = test_slope_change(train_vals, recent_vals, monitor_cfg)
-        row["stationarity_value"],       row["stationarity_flag"]       = test_stationarity(train_vals, recent_vals, monitor_cfg)
-        row["trend_significance_value"], row["trend_significance_flag"] = test_trend_significance(train_vals, recent_vals, monitor_cfg)
+        row["ks_distribution_value"], row["ks_distribution_flag"] = test_ks_distribution(train_vals, recent_vals, monitor_cfg)
+        row["level_shift_value"],     row["level_shift_flag"]     = test_level_shift(train_vals, recent_vals, monitor_cfg)
+        row["dw_shift_value"],        row["dw_shift_flag"]        = test_dw_shift(train_vals, recent_vals, monitor_cfg)
+        row["trend_change_value"],    row["trend_change_flag"]    = test_trend_change(train_vals, recent_vals, monitor_cfg)
+        row["stationarity_value"],    row["stationarity_flag"]    = test_stationarity(train_vals, recent_vals, monitor_cfg)
 
         # ── Truthfulness ─────────────────────────────────────────────────────
         row["coverage_shift_value"],  row["coverage_shift_flag"]  = test_coverage_shift(train_pres, recent_pres, monitor_cfg)
         row["sparsity_change_value"], row["sparsity_change_flag"] = test_sparsity_change(train_zero, recent_zero, monitor_cfg)
 
         # ── Abundance ────────────────────────────────────────────────────────
-        row["low_volume_value"], row["low_volume_flag"] = test_low_volume(train_vals, monitor_cfg)
+        row["low_volume_value"], row["low_volume_flag"] = test_low_volume(train_vals, train_dates, monitor_cfg)
 
         # ── Regularity ───────────────────────────────────────────────────────
-        row["volatility_shift_value"],  row["volatility_shift_flag"]  = test_volatility_shift(train_vals, recent_vals, monitor_cfg)
-        row["outlier_rate_value"],      row["outlier_rate_flag"]      = test_outlier_rate(train_vals, recent_vals, monitor_cfg)
-        row["acf_divergence_value"],    row["acf_divergence_flag"]    = test_acf_divergence(train_vals, recent_vals, monitor_cfg)
-        row["dow_pattern_shift_value"], row["dow_pattern_shift_flag"] = test_dow_pattern_shift(train_vals, recent_vals, monitor_cfg)
+        row["volatility_shift_value"], row["volatility_shift_flag"] = test_volatility_shift(train_vals, recent_vals, monitor_cfg)
+        row["outlier_rate_value"],     row["outlier_rate_flag"]     = test_outlier_rate(train_vals, recent_vals, monitor_cfg)
+        row["acf_structure_value"],    row["acf_structure_flag"]    = test_acf_structure(train_vals, recent_vals, monitor_cfg)
 
         results.append(row)
         logger.debug("Segment processed", extra={"feature_segment": row["feature_segment"]})
@@ -177,13 +174,12 @@ def run_monitoring(
 
 _STABILITY_FLAGS = [
     "ks_distribution_flag", "level_shift_flag", "dw_shift_flag",
-    "slope_change_ratio_flag", "stationarity_flag", "trend_significance_flag",
+    "trend_change_flag", "stationarity_flag",
 ]
 _TRUTHFULNESS_FLAGS = ["coverage_shift_flag", "sparsity_change_flag"]
 _ABUNDANCE_FLAGS    = ["low_volume_flag"]
 _REGULARITY_FLAGS   = [
-    "volatility_shift_flag", "outlier_rate_flag",
-    "acf_divergence_flag", "dow_pattern_shift_flag",
+    "volatility_shift_flag", "outlier_rate_flag", "acf_structure_flag",
 ]
 
 

@@ -57,18 +57,27 @@ def test_run_monitoring_output_has_expected_columns():
         "ks_distribution_value", "ks_distribution_flag",
         "level_shift_value", "level_shift_flag",
         "dw_shift_value", "dw_shift_flag",
-        "slope_change_ratio_value", "slope_change_ratio_flag",
+        "trend_change_value", "trend_change_flag",
         "stationarity_value", "stationarity_flag",
-        "trend_significance_value", "trend_significance_flag",
         "coverage_shift_value", "coverage_shift_flag",
         "sparsity_change_value", "sparsity_change_flag",
         "low_volume_value", "low_volume_flag",
         "volatility_shift_value", "volatility_shift_flag",
         "outlier_rate_value", "outlier_rate_flag",
+        "acf_structure_value", "acf_structure_flag",
+    }
+    assert expected.issubset(set(result.columns))
+
+def test_run_monitoring_does_not_have_removed_columns():
+    df = _make_df()
+    result = run_monitoring(df, _make_run_cfg(), MonitorConfig())
+    removed = {
+        "slope_change_ratio_value", "slope_change_ratio_flag",
+        "trend_significance_value", "trend_significance_flag",
         "acf_divergence_value", "acf_divergence_flag",
         "dow_pattern_shift_value", "dow_pattern_shift_flag",
     }
-    assert expected.issubset(set(result.columns))
+    assert removed.isdisjoint(set(result.columns))
 
 
 def test_apply_thresholds_adds_summary_columns():
@@ -89,14 +98,15 @@ def test_apply_thresholds_adds_summary_columns():
 
 def test_normal_segment_is_not_flagged():
     # Use permissive thresholds that won't fire on clean i.i.d. normal data.
-    # slope_change_ratio: large to avoid eps-division artifacts; kpss_alpha: tight
-    # to avoid KPSS false positives; volatility_ratio: high since CV_recent/CV_train
-    # for same distribution ≈ 1.0; trend_p_value: tight to avoid false trend flags.
+    # kpss_alpha: tight to avoid KPSS false positives on short recent windows.
+    # volatility_ratio: very large to ensure same-distribution series doesn't flag.
+    # trend_p_value: tight to avoid spurious trend flag on noisy series.
+    # slope_change_ratio: large to avoid eps-division artifacts.
     cfg = MonitorConfig(
-        slope_change_ratio_threshold=50.0,
-        kpss_alpha=0.01,
+        kpss_alpha=0.001,
         volatility_ratio_threshold=1000.0,
         trend_p_value_threshold=0.001,
+        slope_change_ratio_threshold=1000.0,
     )
     df = _make_df(n_days=400, mean=100.0, std=5.0)
     stats = run_monitoring(df, _make_run_cfg(), cfg)

@@ -1,5 +1,6 @@
 # tests/stars/test_tests.py
 import numpy as np
+import pandas as pd
 import pytest
 from stars_pipeline.config import MonitorConfig
 import stars_pipeline.stars.tests as _st
@@ -25,7 +26,13 @@ def test_ks_no_flag_for_same_distribution():
     assert flag is False
 
 def test_ks_returns_nan_flag_false_for_short_input():
+    # min window is 10 — single-element arrays are too short
     stat, flag = _st.test_ks_distribution(np.array([1.0]), np.array([2.0]), CFG)
+    assert np.isnan(stat)
+    assert flag is False
+
+def test_ks_returns_nan_for_nine_element_arrays():
+    stat, flag = _st.test_ks_distribution(np.arange(9, dtype=float), np.arange(9, dtype=float), CFG)
     assert np.isnan(stat)
     assert flag is False
 
@@ -56,63 +63,65 @@ def test_dw_shift_no_flag_for_stable_series():
     assert flag is False
 
 
-# ── test_slope_change ──────────────────────────────────────────────────────────
-def test_slope_change_flags_large_delta():
-    # train has near-zero slope; recent has slope=10 → large |delta|/|baseline|
-    flat_train   = np.linspace(1.0, 1.001, 365)       # slope ~2.7e-6 per step
-    steep_recent = np.arange(90, dtype=float) * 10    # slope = 10
-    _, flag = _st.test_slope_change(flat_train, steep_recent, CFG)
+# ── test_trend_change ──────────────────────────────────────────────────────────
+def test_trend_change_flags_large_slope_shift():
+    # flat train, strongly upward recent → slope_delta is large relative to train slope
+    flat_train   = np.linspace(100.0, 100.5, 365)
+    steep_recent = np.arange(90, dtype=float) * 5.0 + 100.0
+    _, flag = _st.test_trend_change(flat_train, steep_recent, CFG)
     assert flag is True
 
-def test_slope_change_no_flag_for_similar_slopes():
-    # Both windows have slope ≈ 1: delta ≈ 0, ratio ≈ 0
-    linear        = np.arange(365, dtype=float)
-    linear_recent = np.arange(90, dtype=float)
-    _, flag = _st.test_slope_change(linear, linear_recent, CFG)
+def test_trend_change_no_flag_for_similar_slopes():
+    # Both windows on same linear trajectory → interaction coefficient ≈ 0
+    rng = np.random.default_rng(7)
+    t = np.arange(455, dtype=float)
+    series = t * 0.5 + rng.normal(0, 0.1, 455)
+    _, flag = _st.test_trend_change(series[:365], series[365:], CFG)
     assert flag is False
 
-def test_slope_change_returns_ratio():
-    flat_train   = np.linspace(1.0, 1.001, 365)
-    steep_recent = np.arange(90, dtype=float) * 10
-    ratio, _ = _st.test_slope_change(flat_train, steep_recent, CFG)
-    assert ratio > 0
+def test_trend_change_returns_p_value():
+    flat_train   = np.linspace(100.0, 100.5, 365)
+    steep_recent = np.arange(90, dtype=float) * 5.0 + 100.0
+    p_val, _ = _st.test_trend_change(flat_train, steep_recent, CFG)
+    assert 0.0 <= p_val <= 1.0
 
-
-# ── test_stationarity ──────────────────────────────────────────────────────────
-def test_stationarity_flags_transition_to_nonstationary():
-    stationary_train  = RNG.normal(0, 1, 60)
-    nonstationary_recent = np.cumsum(RNG.normal(0, 1, 40))
-    _, flag = _st.test_stationarity(stationary_train, nonstationary_recent, CFG)
-    assert flag is True
-
-def test_stationarity_no_flag_when_both_stationary():
-    stationary_train  = RNG.normal(0, 1, 60)
-    stationary_recent = RNG.normal(0, 1, 40)
-    _, flag = _st.test_stationarity(stationary_train, stationary_recent, CFG)
-    assert flag is False
-
-def test_stationarity_returns_nan_for_short_input():
-    stat, flag = _st.test_stationarity(np.ones(3), np.ones(3), CFG)
+def test_trend_change_returns_nan_for_short_input():
+    stat, flag = _st.test_trend_change(np.arange(5, dtype=float), np.arange(5, dtype=float), CFG)
     assert np.isnan(stat)
     assert flag is False
 
 
-# ── test_trend_significance ────────────────────────────────────────────────────
-def test_trend_significance_flags_strong_trend():
-    # Deterministic ramp — p-value is effectively 0, well below 0.20
-    strong_trend = np.arange(90, dtype=float) + RNG.normal(0, 0.1, 90)
-    _, flag = _st.test_trend_significance(TRAIN_STABLE, strong_trend, CFG)
+# ── test_stationarity ──────────────────────────────────────────────────────────
+def test_stationarity_flags_transition_to_nonstationary():
+    # min window is 30 — use arrays large enough to pass the guard
+    stationary_train  = RNG.normal(0, 1, 90)
+    nonstationary_recent = np.cumsum(RNG.normal(0, 1, 90))
+    _, flag = _st.test_stationarity(stationary_train, nonstationary_recent, CFG)
     assert flag is True
 
-def test_trend_significance_no_flag_for_exactly_flat_series():
-    # Constant series has no trend — p-value = 1.0, well above 0.20
-    perfectly_flat = np.full(90, 100.0)
-    _, flag = _st.test_trend_significance(TRAIN_STABLE, perfectly_flat, CFG)
+def test_stationarity_no_flag_when_both_stationary():
+    # White noise around a fixed mean — KPSS will not flag either window, so
+    # the condition (train_stationary AND recent_non_stationary) cannot be True.
+    # Use a tight kpss_alpha to reduce the chance of a false positive.
+    cfg_tight = MonitorConfig(kpss_alpha=0.01)
+    rng2 = np.random.default_rng(1234)
+    train_wn  = rng2.normal(0, 1, 90)
+    recent_wn = rng2.normal(0, 1, 90)
+    _, flag = _st.test_stationarity(train_wn, recent_wn, cfg_tight)
+    assert flag is False
+
+def test_stationarity_returns_nan_for_short_input():
+    # arrays of length 3 are below the 30-observation minimum
+    stat, flag = _st.test_stationarity(np.ones(3), np.ones(3), CFG)
+    assert np.isnan(stat)
+    assert flag is False
+
+def test_stationarity_returns_nan_for_under_30():
+    stat, flag = _st.test_stationarity(np.ones(29), np.ones(29), CFG)
+    assert np.isnan(stat)
     assert flag is False
 
 
-# ── Task 7 additional imports ──────────────────────────────────────────────────
-# (import is already done via `import stars_pipeline.stars.tests as _st`)
 
 
 # ── test_coverage_shift ────────────────────────────────────────────────────────
@@ -150,37 +159,45 @@ def test_sparsity_no_flag_for_stable_sparsity():
 
 
 # ── test_low_volume ────────────────────────────────────────────────────────────
+_LOW_VOL_DATES = pd.date_range("2023-01-01", periods=365, freq="D")
+
 def test_low_volume_flags_below_threshold():
-    # avg monthly = 0.05/day * 30.44 ≈ 1.52 → below threshold of 3
+    # avg monthly ≈ 0.05 * 30 ≈ 1.5 → below threshold of 3
     low = np.full(365, 0.05)
-    _, flag = _st.test_low_volume(low, CFG)
+    _, flag = _st.test_low_volume(low, _LOW_VOL_DATES, CFG)
     assert flag is True
 
 def test_low_volume_no_flag_above_threshold():
     high = np.full(365, 10.0)
-    _, flag = _st.test_low_volume(high, CFG)
+    _, flag = _st.test_low_volume(high, _LOW_VOL_DATES, CFG)
     assert flag is False
 
 def test_low_volume_returns_avg_monthly():
     arr = np.full(365, 5.0)
-    value, _ = _st.test_low_volume(arr, CFG)
+    value, _ = _st.test_low_volume(arr, _LOW_VOL_DATES, CFG)
     assert value > 0
 
 
 # ── test_volatility_shift ──────────────────────────────────────────────────────
-def test_volatility_flags_cv_above_threshold():
-    # With threshold=0.10, any recent CV >= 10% of train CV flags.
-    # A ratio of ~1.0 (same distribution) is well above 0.10.
-    stable_train   = RNG.normal(100, 5, 365)         # CV ~0.05
-    similar_recent = RNG.normal(100, 5, 90)          # CV ~0.05 → ratio ~1.0 >= 0.10
-    _, flag = _st.test_volatility_shift(stable_train, similar_recent, CFG)
+def test_volatility_flags_increased_variability():
+    # recent CV >> train CV → cv_ratio >= 1.50 → flag
+    stable_train   = RNG.normal(100, 5, 365)        # CV ~0.05
+    volatile_recent = RNG.normal(100, 50, 90)       # CV ~0.50 → ratio ~10 >> 1.50
+    _, flag = _st.test_volatility_shift(stable_train, volatile_recent, CFG)
     assert flag is True
 
-def test_volatility_no_flag_for_nearly_constant_recent():
-    # Recent with tiny std → CV_recent << threshold * CV_train → no flag
-    stable_train       = RNG.normal(100, 30, 365)    # CV ~0.30
-    nearly_flat_recent = np.full(90, 100.0) + RNG.normal(0, 0.0001, 90)  # CV ≈ 0
-    _, flag = _st.test_volatility_shift(stable_train, nearly_flat_recent, CFG)
+def test_volatility_flags_collapsed_variability():
+    # recent CV << train CV → cv_ratio <= 1/1.50 ≈ 0.67 → flag
+    volatile_train  = RNG.normal(100, 40, 365)       # CV ~0.40
+    flat_recent     = np.full(90, 100.0) + RNG.normal(0, 0.1, 90)  # CV ≈ 0.001
+    _, flag = _st.test_volatility_shift(volatile_train, flat_recent, CFG)
+    assert flag is True
+
+def test_volatility_no_flag_for_same_distribution():
+    # same distribution → cv_ratio ≈ 1.0, well within (1/1.50, 1.50) → no flag
+    same_train  = RNG.normal(100, 10, 365)
+    same_recent = RNG.normal(100, 10, 90)
+    _, flag = _st.test_volatility_shift(same_train, same_recent, CFG)
     assert flag is False
 
 def test_volatility_returns_nan_for_zero_mean():
@@ -215,31 +232,21 @@ def test_outlier_rate_returns_nan_for_short_train():
     assert flag is False
 
 
-# ── test_acf_divergence ────────────────────────────────────────────────────────
-def test_acf_divergence_flags_when_acf_changes_significantly():
-    # train: autocorrelated; recent: white noise
-    autocorr = np.cumsum(RNG.normal(0, 1, 200))
-    white_noise = RNG.normal(0, 1, 90)
-    _, flag = _st.test_acf_divergence(autocorr, white_noise, CFG)
+# ── test_acf_structure ────────────────────────────────────────────────────────
+def test_acf_structure_flags_when_acf_pattern_disappears():
+    # Strongly autocorrelated train; white-noise recent — lag-1 ACF will diverge
+    rng2 = np.random.default_rng(99)
+    autocorr_train = np.cumsum(rng2.normal(0, 1, 200))
+    white_recent   = rng2.normal(0, 1, 90)
+    _, flag = _st.test_acf_structure(autocorr_train, white_recent, CFG)
     assert flag is True
 
-def test_acf_divergence_no_flag_for_similar_acf():
-    _, flag = _st.test_acf_divergence(TRAIN_STABLE, RECENT_STABLE, CFG)
+def test_acf_structure_no_flag_for_similar_acf():
+    # i.i.d. series — training ACF is near zero at all lags → no Bartlett-significant lags
+    _, flag = _st.test_acf_structure(TRAIN_STABLE, RECENT_STABLE, CFG)
     assert flag is False
 
-def test_acf_divergence_returns_nan_for_short_input():
-    stat, flag = _st.test_acf_divergence(np.ones(3), np.ones(3), CFG)
-    assert np.isnan(stat)
-    assert flag is False
-
-
-# ── test_dow_pattern_shift ─────────────────────────────────────────────────────
-def test_dow_pattern_no_flag_for_stable_series():
-    # Both windows have no strong DOW pattern — ACF lag-7 ~ 0
-    _, flag = _st.test_dow_pattern_shift(TRAIN_STABLE, RECENT_STABLE, CFG)
-    assert flag is False
-
-def test_dow_pattern_returns_nan_for_short_input():
-    stat, flag = _st.test_dow_pattern_shift(np.ones(5), np.ones(5), CFG)
+def test_acf_structure_returns_nan_for_short_input():
+    stat, flag = _st.test_acf_structure(np.ones(3), np.ones(3), CFG)
     assert np.isnan(stat)
     assert flag is False
