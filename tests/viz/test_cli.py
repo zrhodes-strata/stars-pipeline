@@ -7,7 +7,7 @@ from stars_pipeline.viz.cli import main
 
 def _make_long_csv(tmp_path: Path) -> Path:
     """Write a minimal long-format CSV for CLI testing."""
-    from tests.viz.test_wide import _make_long_df
+    from tests.viz.conftest import _make_long_df
     df = _make_long_df()
     p = tmp_path / "stars_results.csv"
     df.to_csv(p, index=False)

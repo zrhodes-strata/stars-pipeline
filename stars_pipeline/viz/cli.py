@@ -5,7 +5,6 @@ import sys
 from pathlib import Path
 
 import matplotlib
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 
@@ -22,6 +21,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    matplotlib.use("Agg")
     import pandas as pd
     from stars_pipeline.viz._wide import long_to_wide
     from stars_pipeline.viz.plots import (
@@ -44,8 +44,12 @@ def main(argv: list[str] | None = None) -> int:
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    long_df = pd.read_csv(input_path)
-    stats_df = long_to_wide(long_df)
+    try:
+        long_df = pd.read_csv(input_path)
+        stats_df = long_to_wide(long_df)
+    except Exception as exc:
+        print(f"ERROR: Failed to read/pivot input: {exc}", file=sys.stderr)
+        return 1
 
     plots = [
         ("metric_distributions",  lambda: plot_metric_distributions(stats_df)),
