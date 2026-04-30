@@ -485,7 +485,8 @@ def plot_mesh_distribution(
     else:
         normal_mask = pd.Series(True, index=df.index)
 
-    fig, ax = plt.subplots(figsize=figsize)
+    fig, axes = plt.subplots(1, 1, figsize=figsize, squeeze=False)
+    ax = axes[0, 0]
 
     for mask, label, color in [
         (normal_mask,  "Normal (not flagged)",   "#2ca02c"),
@@ -567,7 +568,7 @@ def plot_mesh_by_flag(
         non_empty = [(v, g) for v, g in zip([0, 1], groups) if len(g) > 0]
         ax.boxplot(
             [g for _, g in non_empty],
-            tick_labels=[f"{'Pass' if v == 0 else 'Flag'} (n={len(g)})" for v, g in non_empty],
+            labels=[f"{'Pass' if v == 0 else 'Flag'} (n={len(g)})" for v, g in non_empty],
             patch_artist=True,
             boxprops=dict(facecolor="#c6dbef"),
             medianprops=dict(color="black", linewidth=1.5),
@@ -605,6 +606,7 @@ def plot_accuracy_band_by_flag(
         df["stars_status"] = df["is_flagged"].astype(bool).map({False: "Normal", True: "Atypical"})
     else:
         df["stars_status"] = "Unknown"
+        # "Unknown" rows are intentionally not plotted — no bars rendered when is_flagged absent
 
     band_labels = {"within_3": "Within 3%", "within_5": "Within 5%", "within_10": "Within 10%"}
     statuses = ["Normal", "Atypical"]
