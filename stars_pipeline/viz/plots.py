@@ -296,11 +296,168 @@ def plot_flag_rates_by_dim(
     fig.tight_layout()
     return fig
 
-def plot_severity_and_families(stats_df: pd.DataFrame, **kwargs) -> plt.Figure:
-    raise NotImplementedError
+def plot_severity_and_families(
+    stats_df: pd.DataFrame,
+    *,
+    figsize: tuple[float, float] = (14, 5),
+) -> plt.Figure:
+    """Two-panel: total violation count distribution and family violation rates."""
+    df = stats_df.copy()
+    viol_cols = [c for c in ["stability_violations", "truthfulness_violations",
+                              "abundance_violations", "regularity_violations"]
+                 if c in df.columns]
+    df["total_violations"] = df[viol_cols].fillna(0).sum(axis=1) if viol_cols else 0
 
-def plot_threshold_proximity(stats_df: pd.DataFrame, cfg=None, **kwargs) -> plt.Figure:
-    raise NotImplementedError
+    family_colors = {
+        "stability_violations":    "#1f77b4",
+        "truthfulness_violations": "#ff7f0e",
+        "abundance_violations":    "#9467bd",
+        "regularity_violations":   "#d62728",
+    }
+    family_labels = {
+        "stability_violations":    "Stability",
+        "truthfulness_violations": "Truthfulness",
+        "abundance_violations":    "Abundance",
+        "regularity_violations":   "Regularity",
+    }
 
-def plot_segment_series(series_df: pd.DataFrame, feature_segment: str, **kwargs) -> plt.Figure:
-    raise NotImplementedError
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize)
+
+    max_v = int(df["total_violations"].max()) if len(df) > 0 else 5
+    bins = range(0, max_v + 2)
+    ax1.hist(df["total_violations"], bins=bins, align="left", color="#5555cc", edgecolor="white")
+    ax1.set_xlabel("Total Violations per Segment")
+    ax1.set_ylabel("Count of Segments")
+    ax1.set_title("Violation Count Distribution")
+    ax1.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
+
+    rates = {vc: float((df[vc].fillna(0) > 0).mean()) for vc in viol_cols}
+    y = ["Segments"]
+    left = 0.0
+    for vc, rate in rates.items():
+        ax2.barh(y, [rate], left=[left],
+                 color=family_colors.get(vc, "grey"),
+                 label=family_labels.get(vc, vc), alpha=0.85)
+        if rate > 0.03:
+            ax2.text(left + rate / 2, 0, f"{rate:.0%}", ha="center", va="center",
+                     fontsize=8, color="white", fontweight="bold")
+        left += rate
+    ax2.set_xlim(0, 1)
+    ax2.set_xlabel("Fraction of Segments")
+    ax2.set_title("Fraction of Segments with Each Family Violated")
+    ax2.legend(fontsize=8, loc="lower right")
+    ax2.tick_params(left=False, labelleft=False)
+
+    n_flagged = int(df["is_flagged"].astype(bool).sum()) if "is_flagged" in df.columns else "?"
+    fig.suptitle(
+        f"STARS Severity Overview  |  {len(df):,} segments, {n_flagged} flagged",
+        fontsize=11,
+    )
+    fig.tight_layout()
+    return fig
+
+
+def plot_threshold_proximity(
+    stats_df: pd.DataFrame,
+    cfg: MonitorConfig | None = None,
+    *,
+    ncols: int = 3,
+    bins: int = 40,
+    figsize_per_panel: tuple[float, float] = (4.2, 3.0),
+) -> plt.Figure:
+    """Show where the canonical threshold sits within each metric's value distribution."""
+    if cfg is None:
+        cfg = MonitorConfig()
+
+    threshold_map: dict[str, tuple[str, float, str]] = {
+        "ks_distribution_value":   ("KS Statistic",        cfg.ks_d_threshold,              ">="),
+        "level_shift_value":       ("Cohen's d",            cfg.level_shift_min_cohen_d,     ">="),
+        "dw_shift_value":          ("|DW Delta|",           cfg.dw_delta_threshold,           ">="),
+        "coverage_shift_value":    ("Coverage Delta",       cfg.coverage_delta_threshold,     ">="),
+        "sparsity_change_value":   ("Sparsity Delta",       cfg.sparsity_delta_threshold,     ">="),
+        "low_volume_value":        ("Avg Monthly Volume",   cfg.low_volume_monthly_threshold, "<"),
+        "volatility_shift_value":  ("CV Ratio",             cfg.volatility_ratio_threshold,   ">="),
+        "outlier_rate_value":      ("Outlier Rate",         cfg.outlier_rate_threshold,       ">="),
+    }
+
+    metrics = [(col, label, thr, direction)
+               for col, (label, thr, direction) in threshold_map.items()
+               if col in stats_df.columns]
+
+    if not metrics:
+        fig, ax = plt.subplots()
+        ax.text(0.5, 0.5, "No threshold metrics found", ha="center", va="center")
+        return fig
+
+    nrows = math.ceil(len(metrics) / ncols)
+    fig, axes = plt.subplots(
+        nrows, ncols,
+        figsize=(figsize_per_panel[0] * ncols, figsize_per_panel[1] * nrows),
+    )
+    axes_flat = np.array(axes).flatten()
+
+    for i, (col, label, thr, direction) in enumerate(metrics):
+        ax = axes_flat[i]
+        vals = stats_df[col].dropna().astype(float)
+        if len(vals) == 0:
+            ax.set_visible(False)
+            continue
+        if direction == ">=":
+            flagged_vals   = vals[vals >= thr]
+            unflagged_vals = vals[vals < thr]
+        else:
+            flagged_vals   = vals[vals < thr]
+            unflagged_vals = vals[vals >= thr]
+
+        all_bins = np.histogram_bin_edges(vals, bins=bins)
+        ax.hist(unflagged_vals, bins=all_bins, color="#2ca02c", alpha=0.6, label="Pass")
+        ax.hist(flagged_vals,   bins=all_bins, color="#d62728", alpha=0.6, label="Flag")
+        ax.axvline(thr, color="black", linestyle="--", linewidth=1.2,
+                   label=f"thr={thr:.3g}")
+        pct_flagged = len(flagged_vals) / len(vals) if len(vals) > 0 else 0
+        ax.set_title(f"{label}\n({pct_flagged:.1%} flagged)", fontsize=8)
+        ax.tick_params(labelsize=7)
+        if i == 0:
+            ax.legend(fontsize=7)
+
+    for j in range(len(metrics), len(axes_flat)):
+        axes_flat[j].set_visible(False)
+
+    fig.suptitle("Threshold Proximity — Metric Value Distributions", fontsize=11, y=1.01)
+    fig.tight_layout()
+    return fig
+
+
+def plot_segment_series(
+    series_df: pd.DataFrame,
+    feature_segment: str,
+    *,
+    recent_days: int = 90,
+    figsize: tuple[float, float] = (13, 4),
+) -> plt.Figure:
+    """Time-series plot for a single segment showing train vs recent window split."""
+    seg = series_df[series_df["feature_segment"] == feature_segment].copy()
+    if seg.empty:
+        fig, ax = plt.subplots(figsize=figsize)
+        ax.text(0.5, 0.5, f"No data for segment: {feature_segment}",
+                ha="center", va="center", transform=ax.transAxes)
+        return fig
+
+    seg["date"] = pd.to_datetime(seg["date"])
+    seg = seg.sort_values("date")
+
+    cutoff = seg["date"].max() - pd.Timedelta(days=recent_days - 1)
+    train  = seg[seg["date"] < cutoff]
+    recent = seg[seg["date"] >= cutoff]
+
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.plot(train["date"],  train["actual"],  color="#1f77b4", lw=1.2, label="Training window")
+    ax.plot(recent["date"], recent["actual"], color="#d62728", lw=1.5, label=f"Recent {recent_days}d")
+    ax.axvline(cutoff, color="grey", linestyle="--", linewidth=0.9)
+    ax.fill_between(recent["date"], recent["actual"], alpha=0.12, color="#d62728")
+    ax.set_title(f"Segment: {feature_segment}", fontsize=9)
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Volume")
+    ax.legend(fontsize=8)
+    fig.tight_layout()
+    return fig
