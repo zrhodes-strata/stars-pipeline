@@ -111,8 +111,8 @@ def plot_normal_breakdowns(
     # Panel 1: by patient_type_rollup
     if "patient_type_rollup" in stats_df.columns:
         pt = (
-            stats_df.groupby("patient_type_rollup")["is_normal"]
-            .agg(pct_normal="mean", n="count")
+            stats_df.groupby("patient_type_rollup")
+            .agg(pct_normal=("is_normal", "mean"), n=("is_normal", "count"))
             .reset_index()
             .sort_values("pct_normal")
         )
@@ -131,8 +131,8 @@ def plot_normal_breakdowns(
     # Panel 2: by entity_id
     if "entity_id" in stats_df.columns:
         ent = (
-            stats_df.groupby("entity_id")["is_normal"]
-            .agg(pct_normal="mean", n="count")
+            stats_df.groupby("entity_id")
+            .agg(pct_normal=("is_normal", "mean"), n=("is_normal", "count"))
             .reset_index()
             .nlargest(top_n_entities, "n")
             .sort_values("pct_normal")
@@ -158,13 +158,16 @@ def plot_normal_breakdowns(
             .mean()
             .unstack("patient_type_rollup")
         )
-        cmap = sns.diverging_palette(10, 130, as_cmap=True)
-        sns.heatmap(
-            heat_df, ax=ax3, cmap=cmap, vmin=0, vmax=1,
-            annot=True, fmt=".0%", linewidths=0.4,
-            annot_kws={"size": 7},
-            cbar_kws={"label": "% Normal"},
-        )
+        if not heat_df.empty:
+            nan_mask = heat_df.isna()
+            cmap = sns.diverging_palette(10, 130, as_cmap=True)
+            sns.heatmap(
+                heat_df, ax=ax3, cmap=cmap, vmin=0, vmax=1,
+                mask=nan_mask,
+                annot=True, fmt=".0%", linewidths=0.4,
+                annot_kws={"size": 7},
+                cbar_kws={"label": "% Normal"},
+            )
         ax3.set_title("Normal Rate — Entity × Patient Type", fontsize=9)
         ax3.set_xlabel("")
         ax3.tick_params(labelsize=7)
