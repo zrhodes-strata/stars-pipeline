@@ -163,10 +163,88 @@ def launch_processing_job(
     return job_name
 
 
+# ── Viz job launcher ─────────────────────────────────────────────────────────
+
+
+def launch_viz_job(
+    input_s3_uri: str,
+    output_s3_uri: str = OUTPUT_S3_URI,
+    recent_days: int = 90,
+    dpi: int = 150,
+    job_name_prefix: str = "stars-viz",
+) -> str:
+    """
+    Launch stars-viz as a SageMaker Processing Job.
+
+    Reads a long-format CSV from S3, generates diagnostic PNGs, and uploads
+    them back to S3.
+
+    Args:
+        input_s3_uri:    S3 URI of the long-format CSV produced by stars-pipeline
+                         (e.g. ``"s3://my-bucket/stars-pipeline/output/stars_results.csv"``).
+        output_s3_uri:   S3 URI prefix where PNG files will be uploaded.
+        recent_days:     Recent window size passed to --recent-days.
+        dpi:             PNG resolution passed to --dpi.
+        job_name_prefix: Prefix for the SageMaker job name. Run date appended automatically.
+
+    Returns:
+        The SageMaker Processing Job name.
+    """
+    job_name = f"{job_name_prefix}-{date.today()}"
+
+    client = boto3.client("sagemaker")
+    client.create_processing_job(
+        ProcessingJobName=job_name,
+        ProcessingResources={
+            "ClusterConfig": {
+                "InstanceCount": 1,
+                "InstanceType": INSTANCE_TYPE,
+                "VolumeSizeInGB": 20,
+            }
+        },
+        AppSpecification={
+            "ImageUri": ECR_IMAGE_URI,
+            "ContainerEntrypoint": ["python", "-m", "stars_pipeline.viz.cli"],
+            "ContainerArguments": [
+                "--input",       "/opt/ml/processing/input/stars_results.csv",
+                "--output-dir",  "/opt/ml/processing/output",
+                "--recent-days", str(recent_days),
+                "--dpi",         str(dpi),
+            ],
+        },
+        ProcessingInputs=[
+            {
+                "InputName": "stars-results",
+                "S3Input": {
+                    "S3Uri": input_s3_uri,
+                    "LocalPath": "/opt/ml/processing/input",
+                    "S3DataType": "S3Prefix",
+                    "S3InputMode": "File",
+                },
+            }
+        ],
+        ProcessingOutputConfig={
+            "Outputs": [
+                {
+                    "OutputName": "stars-plots",
+                    "S3Output": {
+                        "S3Uri": output_s3_uri,
+                        "LocalPath": "/opt/ml/processing/output",
+                        "S3UploadMode": "EndOfJob",
+                    },
+                }
+            ]
+        },
+        RoleArn=IAM_ROLE_ARN,
+    )
+    print(f"Launched SageMaker Processing Job: {job_name}")
+    return job_name
+
+
 # ── Example usage ─────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    # Fetch credentials from Secrets Manager and launch a job
+    # 1. Run the pipeline to produce a long-format CSV
     creds = get_snowflake_env_from_secrets_manager(
         secret_name="prod/snowflake/stars-pipeline",
         region="us-east-1",
@@ -175,4 +253,10 @@ if __name__ == "__main__":
         strata_ids="84,14,1318",
         date_from="2022-01-01",
         snowflake_env=creds,
+    )
+
+    # 2. Generate diagnostic plots from an existing CSV already in S3
+    launch_viz_job(
+        input_s3_uri=f"{OUTPUT_S3_URI}stars_results.csv",
+        output_s3_uri=f"{OUTPUT_S3_URI}plots/",
     )
