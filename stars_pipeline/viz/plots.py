@@ -10,17 +10,17 @@ import seaborn as sns
 
 from stars_pipeline.config import MonitorConfig
 
-# Maps new wide column name → (display label, upper clip for tail display)
-_METRIC_DISPLAY: dict[str, tuple[str, float | None]] = {
-    "ks_distribution_value":          ("KS Statistic", None),
-    "level_shift_value":              ("Level Shift |Cohen's d|", 4.0),
-    "dw_shift_value":                 ("DW Shift |Δ|", None),
-    "trend_change__slope_change_ratio": ("Slope Change Ratio", 6.0),
-    "coverage_shift_value":           ("Coverage Δ", None),
-    "sparsity_change_value":          ("Sparsity Δ", None),
-    "low_volume_value":               ("Avg Monthly Volume (train)", 300.0),
-    "volatility_shift_value":         ("CV Ratio", 12.0),
-    "outlier_rate_value":             ("Outlier Rate", 0.5),
+# Maps new wide column name → (display label, upper clip for tail display, flag column)
+_METRIC_DISPLAY: dict[str, tuple[str, float | None, str | None]] = {
+    "ks_distribution_value":            ("KS Statistic",                None,  "ks_distribution_flag"),
+    "level_shift_value":                ("Level Shift |Cohen's d|",     4.0,   "level_shift_flag"),
+    "dw_shift_value":                   ("DW Shift |Δ|",                None,  "dw_shift_flag"),
+    "trend_change__slope_change_ratio": ("Slope Change Ratio",          6.0,   "trend_change_flag"),
+    "coverage_shift_value":             ("Coverage Δ",                  None,  "coverage_shift_flag"),
+    "sparsity_change_value":            ("Sparsity Δ",                  None,  "sparsity_change_flag"),
+    "low_volume_value":                 ("Avg Monthly Volume (train)",   300.0, "low_volume_flag"),
+    "volatility_shift_value":           ("CV Ratio",                    12.0,  "volatility_shift_flag"),
+    "outlier_rate_value":               ("Outlier Rate",                0.5,   "outlier_rate_flag"),
 }
 
 
@@ -46,7 +46,7 @@ def plot_metric_distributions(
 
     for i, col in enumerate(metrics):
         ax = axes_flat[i]
-        label, clip_hi = _METRIC_DISPLAY[col]
+        label, clip_hi, flag_col = _METRIC_DISPLAY[col]
         for mask, name, color in [
             (normal_mask,  "Normal",   "#2ca02c"),
             (~normal_mask, "Atypical", "#d62728"),
@@ -66,7 +66,10 @@ def plot_metric_distributions(
         if col in thresholds:
             ax.axvline(thresholds[col], color="black", linestyle="--", linewidth=1.0,
                        label=f"thr={thresholds[col]:.3g}")
-        flag_rate = (~normal_mask).mean()
+        if flag_col and flag_col in stats_df.columns:
+            flag_rate = stats_df[flag_col].astype(float).mean()
+        else:
+            flag_rate = (~normal_mask).mean()
         ax.set_title(f"{label}\n(flag rate {flag_rate:.1%})", fontsize=8)
         ax.tick_params(labelsize=7)
         if i == 0:
