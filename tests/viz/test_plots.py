@@ -14,6 +14,9 @@ from stars_pipeline.viz.plots import (
     plot_severity_and_families,
     plot_threshold_proximity,
     plot_segment_series,
+    plot_mesh_distribution,
+    plot_mesh_by_flag,
+    plot_accuracy_band_by_flag,
 )
 
 
@@ -29,7 +32,10 @@ def _make_stats_df(n: int = 50, seed: int = 42) -> pd.DataFrame:
             "patient_type_rollup": rng.choice(["Inpatient", "Outpatient", "Observation"]),
             "service_line": rng.choice(["Cardiology", "Orthopedics", "Neurology"]),
             "feature_segment": f"84|E{i % 10:02d}|pt|sl",
-            "mesh": float(rng.uniform(0.02, 0.25)),
+            "mesh": float(rng.uniform(1.0, 20.0)),
+            "within_3":  int(rng.random() < 0.35),
+            "within_5":  int(rng.random() < 0.55),
+            "within_10": int(rng.random() < 0.75),
             "ks_distribution_value":  float(rng.uniform(0, 0.6)),
             "ks_distribution_flag":   int(flagged and rng.random() > 0.5),
             "level_shift_value":      float(rng.uniform(0, 3)),
@@ -113,5 +119,23 @@ def test_plot_segment_series_returns_figure():
         "feature_segment": "84|E01|Inpatient|Cardiology",
     })
     fig = plot_segment_series(series_df, "84|E01|Inpatient|Cardiology")
+    assert isinstance(fig, plt.Figure)
+    plt.close(fig)
+
+
+def test_plot_mesh_distribution_returns_figure(stats_df):
+    fig = plot_mesh_distribution(stats_df)
+    assert isinstance(fig, plt.Figure)
+    plt.close(fig)
+
+
+def test_plot_mesh_by_flag_returns_figure(stats_df):
+    fig = plot_mesh_by_flag(stats_df)
+    assert isinstance(fig, plt.Figure)
+    plt.close(fig)
+
+
+def test_plot_accuracy_band_by_flag_returns_figure(stats_df):
+    fig = plot_accuracy_band_by_flag(stats_df)
     assert isinstance(fig, plt.Figure)
     plt.close(fig)

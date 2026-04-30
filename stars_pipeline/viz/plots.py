@@ -464,3 +464,181 @@ def plot_segment_series(
     ax.legend(fontsize=8)
     fig.tight_layout()
     return fig
+
+
+def plot_mesh_distribution(
+    stats_df: pd.DataFrame,
+    *,
+    bins: int = 40,
+    figsize: tuple[float, float] = (10, 4),
+) -> plt.Figure:
+    """MESH distribution split by STARS flag status, with accuracy band thresholds."""
+    if "mesh" not in stats_df.columns:
+        fig, ax = plt.subplots(figsize=figsize)
+        ax.text(0.5, 0.5, "No 'mesh' column found", ha="center", va="center")
+        return fig
+
+    df = stats_df.copy()
+    df["mesh"] = pd.to_numeric(df["mesh"], errors="coerce")
+    if "is_flagged" in df.columns:
+        normal_mask = ~df["is_flagged"].astype(bool)
+    else:
+        normal_mask = pd.Series(True, index=df.index)
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    for mask, label, color in [
+        (normal_mask,  "Normal (not flagged)",   "#2ca02c"),
+        (~normal_mask, "Atypical (flagged)",      "#d62728"),
+    ]:
+        vals = df.loc[mask, "mesh"].dropna()
+        if len(vals) == 0:
+            continue
+        ax.hist(vals, bins=bins, color=color, alpha=0.45, density=True, label=label)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            try:
+                sns.kdeplot(vals, ax=ax, color=color, linewidth=1.4)
+            except Exception:
+                pass
+
+    for thr, label, ls in [(3.0, "3%", "--"), (5.0, "5%", "-."), (10.0, "10%", ":")]:
+        ax.axvline(thr, color="black", linestyle=ls, linewidth=0.9, label=f"Band {label}")
+
+    ax.set_xlabel("Champion MESH (%)")
+    ax.set_ylabel("Density")
+    ax.set_title("Champion MESH Distribution — Normal vs Atypical Segments", fontsize=10)
+    ax.legend(fontsize=8)
+    fig.tight_layout()
+    return fig
+
+
+def plot_mesh_by_flag(
+    stats_df: pd.DataFrame,
+    *,
+    ncols: int = 3,
+    figsize_per_panel: tuple[float, float] = (3.5, 3.0),
+) -> plt.Figure:
+    """Box plots of MESH by flag value (0/1) for each STARS indicator flag column."""
+    if "mesh" not in stats_df.columns:
+        fig, ax = plt.subplots()
+        ax.text(0.5, 0.5, "No 'mesh' column found", ha="center", va="center")
+        return fig
+
+    df = stats_df.copy()
+    df["mesh"] = pd.to_numeric(df["mesh"], errors="coerce")
+
+    flag_cols = [c for c in stats_df.columns
+                 if c.endswith("_flag") and c != "is_flagged"]
+    flag_label_map = {
+        "ks_distribution_flag":  "KS Dist.",
+        "level_shift_flag":      "Level Shift",
+        "dw_shift_flag":         "DW Shift",
+        "trend_change_flag":     "Trend",
+        "stationarity_flag":     "Stationarity",
+        "coverage_shift_flag":   "Coverage",
+        "sparsity_change_flag":  "Sparsity",
+        "low_volume_flag":       "Low Volume",
+        "volatility_shift_flag": "Volatility",
+        "outlier_rate_flag":     "Outlier Rate",
+        "acf_structure_flag":    "ACF Structure",
+    }
+
+    if not flag_cols:
+        fig, ax = plt.subplots()
+        ax.text(0.5, 0.5, "No flag columns found", ha="center", va="center")
+        return fig
+
+    nrows = math.ceil(len(flag_cols) / ncols)
+    fig, axes = plt.subplots(
+        nrows, ncols,
+        figsize=(figsize_per_panel[0] * ncols, figsize_per_panel[1] * nrows),
+        squeeze=False,
+    )
+    axes_flat = axes.flatten()
+
+    for i, fcol in enumerate(flag_cols):
+        ax = axes_flat[i]
+        label = flag_label_map.get(fcol, fcol.replace("_flag", ""))
+        groups = [
+            df.loc[df[fcol].astype(float) == v, "mesh"].dropna()
+            for v in [0, 1]
+        ]
+        non_empty = [(v, g) for v, g in zip([0, 1], groups) if len(g) > 0]
+        ax.boxplot(
+            [g for _, g in non_empty],
+            tick_labels=[f"{'Pass' if v == 0 else 'Flag'} (n={len(g)})" for v, g in non_empty],
+            patch_artist=True,
+            boxprops=dict(facecolor="#c6dbef"),
+            medianprops=dict(color="black", linewidth=1.5),
+        )
+        ax.set_title(label, fontsize=8)
+        ax.set_ylabel("MESH (%)" if i % ncols == 0 else "")
+        ax.tick_params(labelsize=7)
+
+    for j in range(len(flag_cols), len(axes_flat)):
+        axes_flat[j].set_visible(False)
+
+    fig.suptitle("Champion MESH by STARS Indicator Flag", fontsize=11, y=1.01)
+    fig.tight_layout()
+    return fig
+
+
+def plot_accuracy_band_by_flag(
+    stats_df: pd.DataFrame,
+    *,
+    figsize: tuple[float, float] = (10, 5),
+) -> plt.Figure:
+    """
+    For each accuracy band (within_3/5/10), show attainment rate split by
+    Normal vs Atypical STARS classification.
+    """
+    band_cols = [c for c in ["within_3", "within_5", "within_10"] if c in stats_df.columns]
+
+    if not band_cols:
+        fig, ax = plt.subplots(figsize=figsize)
+        ax.text(0.5, 0.5, "No accuracy band columns found", ha="center", va="center")
+        return fig
+
+    df = stats_df.copy()
+    if "is_flagged" in df.columns:
+        df["stars_status"] = df["is_flagged"].astype(bool).map({False: "Normal", True: "Atypical"})
+    else:
+        df["stars_status"] = "Unknown"
+
+    band_labels = {"within_3": "Within 3%", "within_5": "Within 5%", "within_10": "Within 10%"}
+    statuses = ["Normal", "Atypical"]
+    status_colors = {"Normal": "#2ca02c", "Atypical": "#d62728"}
+
+    x = np.arange(len(band_cols))
+    width = 0.35
+    fig, ax = plt.subplots(figsize=figsize)
+
+    for i, status in enumerate(statuses):
+        subset = df[df["stars_status"] == status]
+        rates = [
+            subset[bc].astype(float).mean() if bc in subset.columns and len(subset) > 0 else 0.0
+            for bc in band_cols
+        ]
+        offset = (i - 0.5) * width
+        bars = ax.bar(x + offset, rates, width,
+                      label=f"{status} (n={len(subset)})",
+                      color=status_colors[status], alpha=0.8)
+        for bar, rate in zip(bars, rates):
+            if rate > 0.04:
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    bar.get_height() + 0.01,
+                    f"{rate:.0%}",
+                    ha="center", va="bottom", fontsize=8,
+                )
+
+    ax.set_xticks(x)
+    ax.set_xticklabels([band_labels.get(bc, bc) for bc in band_cols])
+    ax.set_ylabel("Fraction of Segments Within Band")
+    ax.set_ylim(0, 1.15)
+    ax.set_title("Accuracy Band Attainment — Normal vs Atypical Segments", fontsize=10)
+    ax.legend(fontsize=9)
+    ax.axhline(1.0, color="grey", linestyle="--", linewidth=0.7)
+    fig.tight_layout()
+    return fig
