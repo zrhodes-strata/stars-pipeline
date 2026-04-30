@@ -46,7 +46,7 @@ def test_long_format_has_correct_columns():
     }
 
 
-def test_long_format_has_56_rows_per_segment():
+def test_long_format_has_60_rows_per_segment():
     stats = _make_stats_row()
     result = to_long_format(stats)
     # 11 primary + 40 intermediates + 5 original summary + 4 mesh/band summary rows
