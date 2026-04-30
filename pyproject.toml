@@ -21,10 +21,17 @@ dev = [
     "pytest>=7.4.0",
     "pytest-cov>=4.1.0",
     "boto3>=1.28.0",
+    "matplotlib>=3.8.0",
+    "seaborn>=0.13.0",
+]
+viz = [
+    "matplotlib>=3.8.0",
+    "seaborn>=0.13.0",
 ]
 
 [project.scripts]
 stars-pipeline = "stars_pipeline.cli:main"
+stars-viz = "stars_pipeline.viz.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["stars_pipeline*", "sagemaker*"]
