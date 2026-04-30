@@ -146,24 +146,31 @@ def run_monitoring(
             "mesh": group["mesh"].iloc[0] if "mesh" in group.columns else None,
         }
 
+        def _unpack(metric: str, result: dict) -> None:
+            row[f"{metric}_value"] = result["value"]
+            row[f"{metric}_flag"]  = result["flag"]
+            for k, v in result.items():
+                if k not in ("value", "flag"):
+                    row[f"{metric}_{k}"] = v
+
         # ── Stability ────────────────────────────────────────────────────────
-        row["ks_distribution_value"], row["ks_distribution_flag"] = test_ks_distribution(train_vals, recent_vals, monitor_cfg)
-        row["level_shift_value"],     row["level_shift_flag"]     = test_level_shift(train_vals, recent_vals, monitor_cfg)
-        row["dw_shift_value"],        row["dw_shift_flag"]        = test_dw_shift(train_vals, recent_vals, monitor_cfg)
-        row["trend_change_value"],    row["trend_change_flag"]    = test_trend_change(train_vals, recent_vals, monitor_cfg)
-        row["stationarity_value"],    row["stationarity_flag"]    = test_stationarity(train_vals, recent_vals, monitor_cfg)
+        _unpack("ks_distribution", test_ks_distribution(train_vals, recent_vals, monitor_cfg))
+        _unpack("level_shift",     test_level_shift(train_vals, recent_vals, monitor_cfg))
+        _unpack("dw_shift",        test_dw_shift(train_vals, recent_vals, monitor_cfg))
+        _unpack("trend_change",    test_trend_change(train_vals, recent_vals, monitor_cfg))
+        _unpack("stationarity",    test_stationarity(train_vals, recent_vals, monitor_cfg))
 
         # ── Truthfulness ─────────────────────────────────────────────────────
-        row["coverage_shift_value"],  row["coverage_shift_flag"]  = test_coverage_shift(train_pres, recent_pres, monitor_cfg)
-        row["sparsity_change_value"], row["sparsity_change_flag"] = test_sparsity_change(train_zero, recent_zero, monitor_cfg)
+        _unpack("coverage_shift",  test_coverage_shift(train_pres, recent_pres, monitor_cfg))
+        _unpack("sparsity_change", test_sparsity_change(train_zero, recent_zero, monitor_cfg))
 
         # ── Abundance ────────────────────────────────────────────────────────
-        row["low_volume_value"], row["low_volume_flag"] = test_low_volume(train_vals, train_dates, monitor_cfg)
+        _unpack("low_volume",      test_low_volume(train_vals, train_dates, monitor_cfg))
 
         # ── Regularity ───────────────────────────────────────────────────────
-        row["volatility_shift_value"], row["volatility_shift_flag"] = test_volatility_shift(train_vals, recent_vals, monitor_cfg)
-        row["outlier_rate_value"],     row["outlier_rate_flag"]     = test_outlier_rate(train_vals, recent_vals, monitor_cfg)
-        row["acf_structure_value"],    row["acf_structure_flag"]    = test_acf_structure(train_vals, recent_vals, monitor_cfg)
+        _unpack("volatility_shift", test_volatility_shift(train_vals, recent_vals, monitor_cfg))
+        _unpack("outlier_rate",     test_outlier_rate(train_vals, recent_vals, monitor_cfg))
+        _unpack("acf_structure",    test_acf_structure(train_vals, recent_vals, monitor_cfg))
 
         results.append(row)
         logger.debug("Segment processed", extra={"feature_segment": row["feature_segment"]})

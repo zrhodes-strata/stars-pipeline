@@ -5,7 +5,8 @@ STARS diagnostic test functions — one function per indicator.
 
 Each function:
 - Accepts window arrays and relevant thresholds from MonitorConfig
-- Returns a (metric_value: float, flag: bool) tuple
+- Returns a dict with at minimum ``value`` (float) and ``flag`` (bool), plus
+  intermediate statistics for diagnostics and downstream analysis
 - Is fully documented with: broken assumption, STARS family, statistical
   method, inputs, outputs, threshold, and interpretation notes
 
@@ -22,9 +23,18 @@ For coverage/sparsity tests, the arrays are boolean:
 
 Guard clauses
 -------------
-All functions return (float("nan"), False) when input arrays are too short
-to compute the statistic reliably. Callers should treat NaN metric_value as
-"insufficient data" rather than "no problem".
+All functions return a dict with ``value=nan`` and ``flag=False`` when input
+arrays are too short to compute the statistic reliably. Callers should treat
+NaN ``value`` as "insufficient data" rather than "no problem".
+
+Return dict convention
+----------------------
+Every dict contains:
+    value   float   Primary statistic (the one stored as metric_value)
+    flag    bool    Whether the threshold was exceeded
+
+Additional keys vary by test and are documented in each function's Returns
+section. monitor.py writes them as ``{metric_name}_{key}`` columns.
 """
 from __future__ import annotations
 
@@ -48,9 +58,6 @@ def _fisher_z_test(r1: float, n1: int, r2: float, n2: int) -> float:
     """
     Two-sample Fisher Z-transform test for equality of two correlations.
 
-    Tests H0: rho1 == rho2 using the Fisher Z transformation.
-    Used by test_acf_divergence and test_dow_pattern_shift.
-
     Args:
         r1: Pearson correlation from sample 1.
         n1: Sample size of sample 1.
@@ -70,6 +77,10 @@ def _fisher_z_test(r1: float, n1: int, r2: float, n2: int) -> float:
     return float(2.0 * (1.0 - norm.cdf(abs(z_stat))))
 
 
+def _nan_dict(value: float = float("nan"), flag: bool = False, **extras) -> dict:
+    return {"value": value, "flag": flag, **extras}
+
+
 # ── Stability ─────────────────────────────────────────────────────────────────
 
 
@@ -77,7 +88,7 @@ def test_ks_distribution(
     train: np.ndarray,
     recent: np.ndarray,
     cfg: MonitorConfig,
-) -> tuple[float, bool]:
+) -> dict:
     """
     Detect distributional shift between the training and recent windows.
 
@@ -87,8 +98,7 @@ def test_ks_distribution(
     Threshold:          cfg.ks_d_threshold (default 0.30)
 
     Both the KS statistic gate (stat >= threshold) and the p-value gate
-    (p < alpha) must pass. The p-value gate eliminates spurious large-D
-    values that arise when one window is very short.
+    (p < alpha) must pass.
 
     Args:
         train:  Daily volume values from the training window.
@@ -96,32 +106,37 @@ def test_ks_distribution(
         cfg:    MonitorConfig with hard-coded thresholds.
 
     Returns:
-        (ks_statistic, flag) where flag=True if stat >= cfg.ks_d_threshold AND p < cfg.alpha.
-        Returns (nan, False) if either array has fewer than 10 observations.
+        value       KS statistic
+        flag        True if stat >= cfg.ks_d_threshold AND p < cfg.alpha
+        ks_p_value  p-value from the two-sample KS test
+        mean_train  Mean of training window
+        mean_recent Mean of recent window
     """
     if len(train) < 10 or len(recent) < 10:
-        return (float("nan"), False)
+        return _nan_dict(mean_train=float("nan"), mean_recent=float("nan"),
+                         ks_p_value=float("nan"))
     stat, p = ks_2samp(train, recent)
-    return (float(stat), bool(stat >= cfg.ks_d_threshold and p < cfg.alpha))
+    return {
+        "value":       float(stat),
+        "flag":        bool(stat >= cfg.ks_d_threshold and p < cfg.alpha),
+        "ks_p_value":  float(p),
+        "mean_train":  float(train.mean()),
+        "mean_recent": float(recent.mean()),
+    }
 
 
 def test_level_shift(
     train: np.ndarray,
     recent: np.ndarray,
     cfg: MonitorConfig,
-) -> tuple[float, bool]:
+) -> dict:
     """
     Detect a statistically significant and practically large shift in the mean.
 
     STARS Family:       Stability
     Broken Assumption:  Not Stable — the mean level of the series has changed
     Method:             Welch's t-test (unequal variances) with Cohen's d gate
-    Threshold:          cfg.level_shift_min_cohen_d (default 1.00 — large effect)
-
-    Two-stage test:
-    1. Welch's t-test must be significant (p < cfg.alpha) — rules out noise.
-    2. Cohen's d must be >= cfg.level_shift_min_cohen_d — ensures the shift
-       is large enough to be practically meaningful, not just statistically so.
+    Threshold:          cfg.level_shift_min_cohen_d (default 1.15)
 
     Args:
         train:  Daily volume values from the training window.
@@ -129,40 +144,47 @@ def test_level_shift(
         cfg:    MonitorConfig with hard-coded thresholds.
 
     Returns:
-        (cohens_d, flag) where flag=True if both gates pass.
-        Returns (nan, False) if either array has fewer than 2 observations.
+        value        Cohen's d (0.0 if t-test p >= alpha)
+        flag         True if t-test p < alpha AND cohens_d >= threshold
+        p_value      Welch's t-test p-value
+        mean_train   Mean of training window
+        mean_recent  Mean of recent window
     """
     if len(train) < 2 or len(recent) < 2:
-        return (float("nan"), False)
+        return _nan_dict(p_value=float("nan"), mean_train=float("nan"),
+                         mean_recent=float("nan"))
     _, p_value = ttest_ind(train, recent, equal_var=False)
+    mean_train = float(train.mean())
+    mean_recent = float(recent.mean())
     if p_value >= cfg.alpha:
-        return (0.0, False)
-    pooled_std = np.sqrt(
-        (train.std(ddof=1) ** 2 + recent.std(ddof=1) ** 2) / 2.0
-    )
+        return {"value": 0.0, "flag": False, "p_value": float(p_value),
+                "mean_train": mean_train, "mean_recent": mean_recent}
+    pooled_std = np.sqrt((train.std(ddof=1) ** 2 + recent.std(ddof=1) ** 2) / 2.0)
     if pooled_std == 0:
-        return (0.0, False)
-    cohens_d = abs(recent.mean() - train.mean()) / pooled_std
-    return (float(cohens_d), bool(cohens_d >= cfg.level_shift_min_cohen_d))
+        return {"value": 0.0, "flag": False, "p_value": float(p_value),
+                "mean_train": mean_train, "mean_recent": mean_recent}
+    cohens_d = abs(mean_recent - mean_train) / pooled_std
+    return {
+        "value":       float(cohens_d),
+        "flag":        bool(cohens_d >= cfg.level_shift_min_cohen_d),
+        "p_value":     float(p_value),
+        "mean_train":  mean_train,
+        "mean_recent": mean_recent,
+    }
 
 
 def test_dw_shift(
     train: np.ndarray,
     recent: np.ndarray,
     cfg: MonitorConfig,
-) -> tuple[float, bool]:
+) -> dict:
     """
     Detect a shift in residual autocorrelation structure (Durbin-Watson).
 
     STARS Family:       Stability
     Broken Assumption:  Not Stable — the autocorrelation of residuals has changed
     Method:             OLS linear fit on each window; Durbin-Watson on residuals
-    Threshold:          cfg.dw_delta_threshold (default 1.15)
-
-    The Durbin-Watson statistic ranges from 0 to 4:
-      ~2 = no autocorrelation, ~0 = strong positive, ~4 = strong negative.
-    A large delta between train and recent indicates a structural change in
-    how successive residuals relate to each other.
+    Threshold:          cfg.dw_delta_threshold (default 1.50)
 
     Args:
         train:  Daily volume values from the training window.
@@ -170,8 +192,10 @@ def test_dw_shift(
         cfg:    MonitorConfig with hard-coded thresholds.
 
     Returns:
-        (dw_delta, flag) where dw_delta = |DW_recent - DW_train|.
-        Returns (nan, False) if either array has fewer than 3 observations.
+        value      |DW_recent - DW_train|
+        flag       True if delta >= cfg.dw_delta_threshold
+        dw_train   Durbin-Watson statistic for the training window
+        dw_recent  Durbin-Watson statistic for the recent window
     """
     def _dw(arr: np.ndarray) -> float:
         if len(arr) < 3:
@@ -186,30 +210,29 @@ def test_dw_shift(
     dw_train = _dw(train)
     dw_recent = _dw(recent)
     if np.isnan(dw_train) or np.isnan(dw_recent):
-        return (float("nan"), False)
+        return _nan_dict(dw_train=float("nan"), dw_recent=float("nan"))
     delta = abs(dw_recent - dw_train)
-    return (float(delta), bool(delta >= cfg.dw_delta_threshold))
+    return {
+        "value":     float(delta),
+        "flag":      bool(delta >= cfg.dw_delta_threshold),
+        "dw_train":  dw_train,
+        "dw_recent": dw_recent,
+    }
 
 
 def test_trend_change(
     train: np.ndarray,
     recent: np.ndarray,
     cfg: MonitorConfig,
-) -> tuple[float, bool]:
+) -> dict:
     """
     Detect a statistically significant change in trend slope between windows.
 
     STARS Family:       Stability
     Broken Assumption:  Not Stable — the trend has shifted between training and recent
-    Method:             Interaction-term OLS on the combined series:
-                            y ~ 1 + t + recent_ind + (t × recent_ind)
-                        The interaction term coefficient is slope_delta; its p-value
-                        tests whether the slope has changed significantly.
-    Threshold:          Three gates must ALL pass (matching old pipeline):
-                        1. p_value < cfg.trend_p_value_threshold (default 0.20)
-                        2. max(|slope_train|, |slope_recent|) >= cfg.slope_threshold
-                           (excludes near-flat series where a ratio is meaningless)
-                        3. |slope_delta| / (|slope_train| + eps) >= cfg.slope_change_ratio_threshold
+    Method:             Interaction-term OLS: y ~ 1 + t + recent_ind + (t × recent_ind)
+    Threshold:          Three gates: p < trend_p_value_threshold, max_slope >= slope_threshold,
+                        slope_change_ratio >= slope_change_ratio_threshold
 
     Args:
         train:  Daily volume values from the training window.
@@ -217,11 +240,16 @@ def test_trend_change(
         cfg:    MonitorConfig with hard-coded thresholds.
 
     Returns:
-        (p_value, flag). Returns (nan, False) if either window has fewer than
-        10 observations.
+        value               p-value of the interaction term
+        flag                True if all three gates pass
+        slope_train         OLS slope for the training window
+        slope_recent        OLS slope for the recent window
+        slope_delta         slope_recent - slope_train
+        slope_change_ratio  |slope_delta| / (|slope_train| + eps)
     """
     if len(train) < 10 or len(recent) < 10:
-        return (float("nan"), False)
+        return _nan_dict(slope_train=float("nan"), slope_recent=float("nan"),
+                         slope_delta=float("nan"), slope_change_ratio=float("nan"))
 
     t_train = np.arange(len(train), dtype=float)
     t_recent = np.arange(len(recent), dtype=float) + len(train)
@@ -230,53 +258,48 @@ def test_trend_change(
     ind = np.concatenate([np.zeros(len(train)), np.ones(len(recent))])
     t_x_ind = t_all * ind
 
-    X = sm.add_constant(
-        np.column_stack([t_all, ind, t_x_ind]),
-        has_constant="add",
-    )
+    X = sm.add_constant(np.column_stack([t_all, ind, t_x_ind]), has_constant="add")
     try:
         result = sm.OLS(y_all, X).fit()
     except Exception:
-        return (float("nan"), False)
+        return _nan_dict(slope_train=float("nan"), slope_recent=float("nan"),
+                         slope_delta=float("nan"), slope_change_ratio=float("nan"))
 
-    # params order: const, t, recent_ind, t_x_recent_ind
     slope_train = float(result.params[1])
     slope_delta = float(result.params[3])
     slope_recent = slope_train + slope_delta
     p_val = float(result.pvalues[3])
-
     eps = 1e-9
     slope_change_ratio = abs(slope_delta) / (abs(slope_train) + eps)
     max_slope = max(abs(slope_train), abs(slope_recent))
 
-    flag = bool(
-        p_val < cfg.trend_p_value_threshold
-        and max_slope >= cfg.slope_threshold
-        and slope_change_ratio >= cfg.slope_change_ratio_threshold
-    )
-    return (float(p_val), flag)
+    return {
+        "value":              float(p_val),
+        "flag":               bool(
+                                  p_val < cfg.trend_p_value_threshold
+                                  and max_slope >= cfg.slope_threshold
+                                  and slope_change_ratio >= cfg.slope_change_ratio_threshold
+                              ),
+        "slope_train":        slope_train,
+        "slope_recent":       slope_recent,
+        "slope_delta":        slope_delta,
+        "slope_change_ratio": slope_change_ratio,
+    }
 
 
 def test_stationarity(
     train: np.ndarray,
     recent: np.ndarray,
     cfg: MonitorConfig,
-) -> tuple[float, bool]:
+) -> dict:
     """
     Detect a transition from stationary to non-stationary behaviour (KPSS).
 
     STARS Family:       Stability
     Broken Assumption:  Not Stable — the series has lost its stationary structure
-    Method:             KPSS (Kwiatkowski-Phillips-Schmidt-Shin) test
+    Method:             KPSS test; flag when train stationary (p > kpss_alpha)
+                        but recent non-stationary (p <= kpss_alpha)
     Threshold:          cfg.kpss_alpha (default 0.10)
-
-    Flag fires when:
-      - Training window is stationary  (KPSS p-value >  cfg.kpss_alpha)
-      - Recent window is non-stationary (KPSS p-value <= cfg.kpss_alpha)
-
-    This one-directional test specifically catches the case where a previously
-    stable series has become non-stationary — i.e., the model's stationarity
-    assumption has been violated in the recent window.
 
     Args:
         train:  Daily volume values from the training window.
@@ -284,24 +307,32 @@ def test_stationarity(
         cfg:    MonitorConfig with hard-coded thresholds.
 
     Returns:
-        (kpss_statistic_recent, flag).
-        Returns (nan, False) if either array has fewer than 10 observations
-        (KPSS requires sufficient data to be reliable).
+        value            KPSS statistic for the recent window
+        flag             True if train stationary AND recent non-stationary
+        kpss_p_train     KPSS p-value for the training window
+        kpss_p_recent    KPSS p-value for the recent window
+        train_stationary True if kpss_p_train > cfg.kpss_alpha
     """
     if len(train) < 30 or len(recent) < 30:
-        return (float("nan"), False)
+        return _nan_dict(kpss_p_train=float("nan"), kpss_p_recent=float("nan"),
+                         train_stationary=None)
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", InterpolationWarning)
             _, p_train, _, _ = kpss(train, regression="c", nlags="auto")
             stat_recent, p_recent, _, _ = kpss(recent, regression="c", nlags="auto")
     except Exception:
-        return (float("nan"), False)
-    train_stationary = p_train >= cfg.kpss_alpha
-    recent_nonstationary = p_recent <= cfg.kpss_alpha
-    return (float(stat_recent), bool(train_stationary and recent_nonstationary))
-
-
+        return _nan_dict(kpss_p_train=float("nan"), kpss_p_recent=float("nan"),
+                         train_stationary=None)
+    train_stationary = bool(p_train > cfg.kpss_alpha)
+    recent_nonstationary = bool(p_recent <= cfg.kpss_alpha)
+    return {
+        "value":           float(stat_recent),
+        "flag":            bool(train_stationary and recent_nonstationary),
+        "kpss_p_train":    float(p_train),
+        "kpss_p_recent":   float(p_recent),
+        "train_stationary": train_stationary,
+    }
 
 
 # ── Truthfulness ──────────────────────────────────────────────────────────────
@@ -311,21 +342,14 @@ def test_coverage_shift(
     train_present: np.ndarray,
     recent_present: np.ndarray,
     cfg: MonitorConfig,
-) -> tuple[float, bool]:
+) -> dict:
     """
     Detect a significant shift in data coverage (proportion of observed days).
 
     STARS Family:       Truthfulness
-    Broken Assumption:  Not Truthful — missing data pattern has changed,
-                        suggesting the data no longer accurately represents
-                        the underlying process
+    Broken Assumption:  Not Truthful — missing data pattern has changed
     Method:             Two-proportion z-test on non-missing day rates
-    Threshold:          cfg.coverage_delta_threshold (default 0.30)
-                        and cfg.alpha (default 0.05) for statistical gate
-
-    Coverage rate = non-missing_days / total_days in the window.
-    Both statistical significance (z-test p < alpha) and practical magnitude
-    (|delta| >= coverage_delta_threshold) must be met to flag.
+    Threshold:          cfg.coverage_delta_threshold (default 0.40)
 
     Args:
         train_present:  Boolean array; True = day had an observed value in train.
@@ -333,11 +357,15 @@ def test_coverage_shift(
         cfg:            MonitorConfig with hard-coded thresholds.
 
     Returns:
-        (coverage_delta, flag) where coverage_delta = |rate_recent - rate_train|.
-        Returns (nan, False) if either array is empty.
+        value            |coverage_recent - coverage_train|
+        flag             True if p < alpha AND delta >= threshold
+        p_value          Two-proportion z-test p-value
+        coverage_train   Coverage rate in the training window
+        coverage_recent  Coverage rate in the recent window
     """
     if len(train_present) == 0 or len(recent_present) == 0:
-        return (float("nan"), False)
+        return _nan_dict(p_value=float("nan"), coverage_train=float("nan"),
+                         coverage_recent=float("nan"))
     cov_train = float(train_present.sum()) / len(train_present)
     cov_recent = float(recent_present.sum()) / len(recent_present)
     delta = abs(cov_recent - cov_train)
@@ -346,29 +374,27 @@ def test_coverage_shift(
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
         _, p_value = proportions_ztest(count, nobs)
-    flag = bool((float(p_value) < cfg.alpha) and (delta >= cfg.coverage_delta_threshold))
-    return (float(delta), flag)
+    return {
+        "value":            float(delta),
+        "flag":             bool(float(p_value) < cfg.alpha and delta >= cfg.coverage_delta_threshold),
+        "p_value":          float(p_value),
+        "coverage_train":   cov_train,
+        "coverage_recent":  cov_recent,
+    }
 
 
 def test_sparsity_change(
     train_zero: np.ndarray,
     recent_zero: np.ndarray,
     cfg: MonitorConfig,
-) -> tuple[float, bool]:
+) -> dict:
     """
     Detect a significant shift in sparsity rate (proportion of zero-value days).
 
     STARS Family:       Truthfulness
-    Broken Assumption:  Not Truthful — the zero-value pattern has changed,
-                        which may indicate data suppression, reporting changes,
-                        or structural operational changes
+    Broken Assumption:  Not Truthful — the zero-value pattern has changed
     Method:             Two-proportion z-test on zero-value day rates
     Threshold:          cfg.sparsity_delta_threshold (default 0.30)
-                        and cfg.alpha (default 0.05) for statistical gate
-
-    Sparsity rate = zero_value_days / total_days in the window.
-    Both statistical significance (z-test p < alpha) and practical magnitude
-    (|delta| >= sparsity_delta_threshold) must be met to flag.
 
     Args:
         train_zero:  Boolean array; True = day had a zero value in train window.
@@ -376,11 +402,15 @@ def test_sparsity_change(
         cfg:         MonitorConfig with hard-coded thresholds.
 
     Returns:
-        (sparsity_delta, flag) where sparsity_delta = |rate_recent - rate_train|.
-        Returns (nan, False) if either array is empty.
+        value            |sparsity_recent - sparsity_train|
+        flag             True if p < alpha AND delta >= threshold
+        p_value          Two-proportion z-test p-value
+        sparsity_train   Zero-rate in the training window
+        sparsity_recent  Zero-rate in the recent window
     """
     if len(train_zero) == 0 or len(recent_zero) == 0:
-        return (float("nan"), False)
+        return _nan_dict(p_value=float("nan"), sparsity_train=float("nan"),
+                         sparsity_recent=float("nan"))
     sparsity_train = float(train_zero.sum()) / len(train_zero)
     sparsity_recent = float(recent_zero.sum()) / len(recent_zero)
     delta = abs(sparsity_recent - sparsity_train)
@@ -389,8 +419,13 @@ def test_sparsity_change(
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
         _, p_value = proportions_ztest(count, nobs)
-    flag = bool((float(p_value) < cfg.alpha) and (delta >= cfg.sparsity_delta_threshold))
-    return (float(delta), flag)
+    return {
+        "value":            float(delta),
+        "flag":             bool(float(p_value) < cfg.alpha and delta >= cfg.sparsity_delta_threshold),
+        "p_value":          float(p_value),
+        "sparsity_train":   sparsity_train,
+        "sparsity_recent":  sparsity_recent,
+    }
 
 
 # ── Abundance ─────────────────────────────────────────────────────────────────
@@ -400,7 +435,7 @@ def test_low_volume(
     train: np.ndarray,
     train_dates: pd.DatetimeIndex,
     cfg: MonitorConfig,
-) -> tuple[float, bool]:
+) -> dict:
     """
     Detect insufficient signal volume in the training window.
 
@@ -409,28 +444,31 @@ def test_low_volume(
     Method:             Mean of per-calendar-month totals in the training window
     Threshold:          cfg.low_volume_monthly_threshold (default 3.0 per month)
 
-    Groups daily values by calendar month, sums each month, then takes the
-    mean across months. This matches the old pipeline's _avg_monthly_volume
-    exactly and handles irregular coverage correctly.
-
     Args:
-        train:       Daily volume values from the training window (observed days only).
+        train:       Daily volume values from the training window.
         train_dates: DatetimeIndex aligned with ``train`` (same length).
         cfg:         MonitorConfig with hard-coded thresholds.
 
     Returns:
-        (avg_monthly_volume, flag) where flag=True if avg_monthly < threshold.
-        Returns (nan, True) if train is empty (no data = flag by convention).
+        value              Average monthly volume
+        flag               True if avg_monthly < threshold
+        total_volume_train Total volume in the training window
+        n_months_train     Number of calendar months in the training window
     """
     if len(train) == 0:
-        return (float("nan"), True)
+        return _nan_dict(True, total_volume_train=float("nan"), n_months_train=0)
     monthly = (
         pd.Series(train, index=train_dates)
         .groupby(train_dates.to_period("M"))
         .sum()
     )
     avg_monthly = float(monthly.mean())
-    return (float(avg_monthly), bool(avg_monthly < cfg.low_volume_monthly_threshold))
+    return {
+        "value":             float(avg_monthly),
+        "flag":              bool(avg_monthly < cfg.low_volume_monthly_threshold),
+        "total_volume_train": float(train.sum()),
+        "n_months_train":    int(len(monthly)),
+    }
 
 
 # ── Regularity ────────────────────────────────────────────────────────────────
@@ -440,19 +478,14 @@ def test_volatility_shift(
     train: np.ndarray,
     recent: np.ndarray,
     cfg: MonitorConfig,
-) -> tuple[float, bool]:
+) -> dict:
     """
     Detect a disproportionate shift in relative variability (CV ratio).
 
     STARS Family:       Regularity
     Broken Assumption:  Not Regular — the series variability has shifted materially
-    Method:             Coefficient of Variation ratio:
-                        cv_ratio = (sigma/mu)_recent / (sigma/mu)_train
-    Threshold:          cfg.volatility_ratio_threshold (default 1.50)
-
-    Bidirectional: flags when variability has increased (cv_ratio >= threshold)
-    OR collapsed (cv_ratio <= 1/threshold). A near-zero mean makes CV unstable
-    and returns (nan, False).
+    Method:             cv_ratio = (sigma/mu)_recent / (sigma/mu)_train
+    Threshold:          cfg.volatility_ratio_threshold (default 1.50); bidirectional
 
     Args:
         train:  Daily volume values from the training window.
@@ -460,44 +493,49 @@ def test_volatility_shift(
         cfg:    MonitorConfig with hard-coded thresholds.
 
     Returns:
-        (cv_ratio, flag). Returns (nan, False) if either array has fewer than
-        10 observations or if either mean is near zero (|mean| < 1e-6).
+        value       cv_ratio
+        flag        True if cv_ratio >= threshold OR cv_ratio <= 1/threshold
+        cv_train    Coefficient of variation for the training window
+        cv_recent   Coefficient of variation for the recent window
+        mean_train  Mean of training window
+        mean_recent Mean of recent window
     """
     if len(train) < 10 or len(recent) < 10:
-        return (float("nan"), False)
-    mean_train, mean_recent = train.mean(), recent.mean()
+        return _nan_dict(cv_train=float("nan"), cv_recent=float("nan"),
+                         mean_train=float("nan"), mean_recent=float("nan"))
+    mean_train = float(train.mean())
+    mean_recent = float(recent.mean())
     if abs(mean_train) < 1e-6 or abs(mean_recent) < 1e-6:
-        return (float("nan"), False)
-    cv_train = train.std(ddof=1) / abs(mean_train)
-    cv_recent = recent.std(ddof=1) / abs(mean_recent)
+        return _nan_dict(cv_train=float("nan"), cv_recent=float("nan"),
+                         mean_train=mean_train, mean_recent=mean_recent)
+    cv_train = float(train.std(ddof=1) / abs(mean_train))
+    cv_recent = float(recent.std(ddof=1) / abs(mean_recent))
     eps = 1e-9
     ratio = cv_recent / (cv_train + eps)
     thr = cfg.volatility_ratio_threshold
-    return (float(ratio), bool(ratio >= thr or ratio <= 1.0 / thr))
+    return {
+        "value":       float(ratio),
+        "flag":        bool(ratio >= thr or ratio <= 1.0 / thr),
+        "cv_train":    cv_train,
+        "cv_recent":   cv_recent,
+        "mean_train":  mean_train,
+        "mean_recent": mean_recent,
+    }
 
 
 def test_outlier_rate(
     train: np.ndarray,
     recent: np.ndarray,
     cfg: MonitorConfig,
-) -> tuple[float, bool]:
+) -> dict:
     """
     Detect an excessive proportion of outlier points in the recent window.
 
     STARS Family:       Regularity
     Broken Assumption:  Not Regular — extreme values dominate the recent window
-    Method:             Train-window MAD baseline; modified z-score on recent values.
-                        rate = outlier_count / len(recent)
-    Threshold:          cfg.outlier_z_threshold (default 3.50) for outlier
-                        definition; cfg.outlier_rate_threshold (default 0.40)
-                        for the rate gate
-
-    The modified z-score uses the training window to establish the MAD baseline
-    (median and MAD), then applies it to the recent window. This is more robust
-    than a full-series approach because recent outliers do not inflate the baseline.
-
-    Modified z-score: 0.6745 * |value - train_median| / train_MAD
-    If train_MAD is zero, falls back to train_std as the scale.
+    Method:             Train-window MAD baseline; modified z-score on recent values
+    Threshold:          cfg.outlier_z_threshold (default 3.50) for definition;
+                        cfg.outlier_rate_threshold (default 0.40) for rate gate
 
     Args:
         train:  Daily volume values from the training window.
@@ -505,27 +543,39 @@ def test_outlier_rate(
         cfg:    MonitorConfig with hard-coded thresholds.
 
     Returns:
-        (outlier_rate, flag) where flag=True if rate >= cfg.outlier_rate_threshold.
-        Returns (nan, False) if train has fewer than 3 observations or recent is empty.
+        value          outlier_count / len(recent)
+        flag           True if rate >= cfg.outlier_rate_threshold
+        outlier_count  Number of outlier points in the recent window
+        train_median   Median of the training window (baseline)
+        train_mad      MAD of the training window (baseline)
     """
     if len(train) < 3 or len(recent) == 0:
-        return (float("nan"), False)
+        return _nan_dict(outlier_count=0, train_median=float("nan"),
+                         train_mad=float("nan"))
     train_median = float(np.median(train))
     train_mad = float(np.median(np.abs(train - train_median)))
     if train_mad == 0:
         train_std = float(train.std(ddof=1))
         if train_std == 0:
-            # Completely flat training window: any deviation in recent is an outlier.
             outlier_mask = recent != train_median
             rate = float(outlier_mask.sum()) / len(recent)
-            return (float(rate), bool(rate >= cfg.outlier_rate_threshold))
+            return {"value": float(rate), "flag": bool(rate >= cfg.outlier_rate_threshold),
+                    "outlier_count": int(outlier_mask.sum()),
+                    "train_median": train_median, "train_mad": train_mad}
         scale = train_std / 0.6745
     else:
         scale = train_mad / 0.6745
     modified_z = np.abs(recent - train_median) / scale
     outlier_mask = modified_z > cfg.outlier_z_threshold
-    rate = float(outlier_mask.sum()) / len(recent)
-    return (float(rate), bool(rate >= cfg.outlier_rate_threshold))
+    outlier_count = int(outlier_mask.sum())
+    rate = float(outlier_count) / len(recent)
+    return {
+        "value":         float(rate),
+        "flag":          bool(rate >= cfg.outlier_rate_threshold),
+        "outlier_count": outlier_count,
+        "train_median":  train_median,
+        "train_mad":     train_mad,
+    }
 
 
 _ACF_STRUCTURE_LAGS: tuple[int, ...] = (1, 7, 30)
@@ -535,24 +585,16 @@ def test_acf_structure(
     train: np.ndarray,
     recent: np.ndarray,
     cfg: MonitorConfig,
-) -> tuple[float, bool]:
+) -> dict:
     """
     Detect divergence in autocorrelation structure across lags 1, 7, and 30.
 
     STARS Family:       Regularity
     Broken Assumption:  Not Regular — temporal patterns the model relied on are gone
-    Method:             For each lag in (1, 7, 30):
-                          1. Compute ACF for train and recent windows.
-                          2. Check whether the training ACF is significant via the
-                             Bartlett bound: |acf_train| > 1.96 / sqrt(n_train).
-                          3. If significant in train, apply Fisher Z-transform test
-                             to check divergence (p < cfg.acf_divergence_p_threshold).
-                        Flag fires when at least one lag is significant in train
-                        AND has diverged significantly in recent.
+    Method:             For each lag in (1, 7, 30): if training ACF exceeds the
+                        Bartlett bound (1.96/sqrt(n_train)), apply Fisher Z-transform
+                        test to check divergence (p < cfg.acf_divergence_p_threshold).
     Threshold:          cfg.acf_divergence_p_threshold (default 0.05)
-
-    Only lags significant in the training window are tested — this prevents
-    false positives from lags that were never meaningful to begin with.
 
     Args:
         train:  Daily volume values from the training window.
@@ -560,12 +602,27 @@ def test_acf_structure(
         cfg:    MonitorConfig with hard-coded thresholds.
 
     Returns:
-        (min_divergence_p, flag) where flag=True if any lag diverged.
-        min_divergence_p is the smallest p-value across tested lags (nan if none tested).
-        Returns (nan, False) if either array has fewer than 10 observations.
+        value               Minimum divergence p-value across tested lags (nan if none tested)
+        flag                True if any lag diverged
+        bartlett_bound      1.96 / sqrt(n_train)
+        acf_train_lag1      ACF at lag 1 for training window
+        acf_recent_lag1     ACF at lag 1 for recent window
+        acf_p_lag1          Fisher Z p-value at lag 1 (nan if lag not significant in train)
+        acf_train_lag7      ACF at lag 7 for training window
+        acf_recent_lag7     ACF at lag 7 for recent window
+        acf_p_lag7          Fisher Z p-value at lag 7 (nan if lag not significant in train)
+        acf_train_lag30     ACF at lag 30 for training window
+        acf_recent_lag30    ACF at lag 30 for recent window
+        acf_p_lag30         Fisher Z p-value at lag 30 (nan if lag not significant in train)
     """
+    nan_acf = {
+        "bartlett_bound":  float("nan"),
+        "acf_train_lag1":  float("nan"), "acf_recent_lag1":  float("nan"), "acf_p_lag1":  float("nan"),
+        "acf_train_lag7":  float("nan"), "acf_recent_lag7":  float("nan"), "acf_p_lag7":  float("nan"),
+        "acf_train_lag30": float("nan"), "acf_recent_lag30": float("nan"), "acf_p_lag30": float("nan"),
+    }
     if len(train) < 10 or len(recent) < 10:
-        return (float("nan"), False)
+        return _nan_dict(**nan_acf)
 
     n_train, n_recent = len(train), len(recent)
     max_lag = max(_ACF_STRUCTURE_LAGS)
@@ -585,19 +642,34 @@ def test_acf_structure(
     min_p = float("nan")
     any_diverged = False
 
+    result = {
+        "value":           float("nan"),
+        "flag":            False,
+        "bartlett_bound":  float(bartlett_bound),
+        "acf_train_lag1":  float("nan"), "acf_recent_lag1":  float("nan"), "acf_p_lag1":  float("nan"),
+        "acf_train_lag7":  float("nan"), "acf_recent_lag7":  float("nan"), "acf_p_lag7":  float("nan"),
+        "acf_train_lag30": float("nan"), "acf_recent_lag30": float("nan"), "acf_p_lag30": float("nan"),
+    }
+
     for lag in _ACF_STRUCTURE_LAGS:
-        r_train = float(acf_train_vals[lag]) if lag <= train_nlags and np.isfinite(acf_train_vals[lag]) else float("nan")
+        r_train  = float(acf_train_vals[lag])  if lag <= train_nlags  and np.isfinite(acf_train_vals[lag])  else float("nan")
         r_recent = float(acf_recent_vals[lag]) if lag <= recent_nlags and np.isfinite(acf_recent_vals[lag]) else float("nan")
+
+        result[f"acf_train_lag{lag}"]  = r_train
+        result[f"acf_recent_lag{lag}"] = r_recent
 
         if np.isnan(r_train) or np.isnan(r_recent):
             continue
         if abs(r_train) <= bartlett_bound:
-            continue  # training window showed no significant pattern at this lag
+            continue
 
         p = _fisher_z_test(r_train, n_train, r_recent, n_recent)
+        result[f"acf_p_lag{lag}"] = float(p)
         if np.isnan(min_p) or p < min_p:
             min_p = p
         if p < cfg.acf_divergence_p_threshold:
             any_diverged = True
 
-    return (float(min_p), any_diverged)
+    result["value"] = float(min_p)
+    result["flag"]  = any_diverged
+    return result

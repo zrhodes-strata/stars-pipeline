@@ -46,11 +46,11 @@ def test_long_format_has_correct_columns():
     }
 
 
-def test_long_format_has_16_rows_per_segment():
+def test_long_format_has_56_rows_per_segment():
     stats = _make_stats_row()
     result = to_long_format(stats)
-    # 11 indicators + 5 summary rows
-    assert len(result) == 16
+    # 11 primary + 40 intermediates + 5 summary rows
+    assert len(result) == 56
 
 
 def test_long_format_metric_names_include_new_summaries():
@@ -130,4 +130,4 @@ def test_write_long_csv_creates_file(tmp_path):
     write_long_csv(stats, out)
     assert out.exists()
     df = pd.read_csv(out)
-    assert len(df) == 16
+    assert len(df) == 56
