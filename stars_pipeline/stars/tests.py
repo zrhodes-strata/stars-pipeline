@@ -245,7 +245,7 @@ def test_trend_change(
         slope_train         OLS slope for the training window
         slope_recent        OLS slope for the recent window
         slope_delta         slope_recent - slope_train
-        slope_change_ratio  |slope_delta| / (|slope_train| + eps)
+        slope_change_ratio  |slope_delta| / (max(|slope_train|, |slope_recent|) + eps)
     """
     if len(train) < 10 or len(recent) < 10:
         return _nan_dict(slope_train=float("nan"), slope_recent=float("nan"),
@@ -270,8 +270,8 @@ def test_trend_change(
     slope_recent = slope_train + slope_delta
     p_val = float(result.pvalues[3])
     eps = 1e-9
-    slope_change_ratio = abs(slope_delta) / (abs(slope_train) + eps)
     max_slope = max(abs(slope_train), abs(slope_recent))
+    slope_change_ratio = abs(slope_delta) / (max_slope + eps)
 
     return {
         "value":              float(p_val),
