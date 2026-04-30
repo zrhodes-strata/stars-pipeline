@@ -83,8 +83,94 @@ def plot_metric_distributions(
     return fig
 
 
-def plot_normal_breakdowns(stats_df: pd.DataFrame, **kwargs) -> plt.Figure:
-    raise NotImplementedError
+def plot_normal_breakdowns(
+    stats_df: pd.DataFrame,
+    *,
+    top_n_entities: int = 20,
+    figsize: tuple[float, float] = (15, 13),
+) -> plt.Figure:
+    """
+    Three-panel breakdown of Normal (not-flagged) rates.
+
+    Panel 1 — by patient_type_rollup
+    Panel 2 — by entity_id (top N by segment count)
+    Panel 3 — heatmap: entity × patient_type (top N entities)
+    """
+    stats_df = stats_df.copy()
+    stats_df["is_normal"] = ~stats_df["is_flagged"].astype(bool)
+
+    fig = plt.figure(figsize=figsize)
+    gs = fig.add_gridspec(2, 2, hspace=0.45, wspace=0.4)
+    ax1 = fig.add_subplot(gs[0, 0])
+    ax2 = fig.add_subplot(gs[0, 1])
+    ax3 = fig.add_subplot(gs[1, :])
+
+    def _color(v: float) -> str:
+        return "#d62728" if v < 0.5 else "#2ca02c" if v >= 0.75 else "#ff7f0e"
+
+    # Panel 1: by patient_type_rollup
+    if "patient_type_rollup" in stats_df.columns:
+        pt = (
+            stats_df.groupby("patient_type_rollup")["is_normal"]
+            .agg(pct_normal="mean", n="count")
+            .reset_index()
+            .sort_values("pct_normal")
+        )
+        colors = [_color(v) for v in pt["pct_normal"]]
+        ax1.barh(pt["patient_type_rollup"], pt["pct_normal"], color=colors,
+                 edgecolor="white", linewidth=0.5)
+        for _, row in pt.iterrows():
+            ax1.text(row["pct_normal"] + 0.01, row["patient_type_rollup"],
+                     f"{row['n']}", va="center", fontsize=7)
+        ax1.axvline(0.5, color="grey", linestyle="--", linewidth=0.8)
+        ax1.set_xlim(0, 1.15)
+        ax1.set_xlabel("% Normal")
+        ax1.set_title("Normal Rate by Patient Type", fontsize=9)
+        ax1.tick_params(labelsize=7)
+
+    # Panel 2: by entity_id
+    if "entity_id" in stats_df.columns:
+        ent = (
+            stats_df.groupby("entity_id")["is_normal"]
+            .agg(pct_normal="mean", n="count")
+            .reset_index()
+            .nlargest(top_n_entities, "n")
+            .sort_values("pct_normal")
+        )
+        colors2 = [_color(v) for v in ent["pct_normal"]]
+        ax2.barh(ent["entity_id"].astype(str), ent["pct_normal"], color=colors2,
+                 edgecolor="white", linewidth=0.5)
+        for _, row in ent.iterrows():
+            ax2.text(row["pct_normal"] + 0.01, str(row["entity_id"]),
+                     f"{row['n']}", va="center", fontsize=7)
+        ax2.axvline(0.5, color="grey", linestyle="--", linewidth=0.8)
+        ax2.set_xlim(0, 1.15)
+        ax2.set_xlabel("% Normal")
+        ax2.set_title(f"Normal Rate by Entity (top {top_n_entities})", fontsize=9)
+        ax2.tick_params(labelsize=7)
+
+    # Panel 3: entity × patient_type heatmap
+    if "entity_id" in stats_df.columns and "patient_type_rollup" in stats_df.columns:
+        top_entities = stats_df.groupby("entity_id").size().nlargest(top_n_entities).index
+        heat_df = (
+            stats_df[stats_df["entity_id"].isin(top_entities)]
+            .groupby(["entity_id", "patient_type_rollup"])["is_normal"]
+            .mean()
+            .unstack("patient_type_rollup")
+        )
+        cmap = sns.diverging_palette(10, 130, as_cmap=True)
+        sns.heatmap(
+            heat_df, ax=ax3, cmap=cmap, vmin=0, vmax=1,
+            annot=True, fmt=".0%", linewidths=0.4,
+            annot_kws={"size": 7},
+            cbar_kws={"label": "% Normal"},
+        )
+        ax3.set_title("Normal Rate — Entity × Patient Type", fontsize=9)
+        ax3.set_xlabel("")
+        ax3.tick_params(labelsize=7)
+
+    fig.suptitle("STARS Normal Classification Breakdowns", fontsize=12, y=1.01)
+    return fig
 
 def plot_flag_correlation_grid(stats_df: pd.DataFrame, **kwargs) -> plt.Figure:
     raise NotImplementedError
