@@ -33,4 +33,12 @@ def _make_long_df() -> pd.DataFrame:
     ]:
         rows.append({**seg, "stars_family": "Summary", "metric_name": metric,
                      "metric_value": value, "metric_flag": flag})
+    for metric, value, flag in [
+        ("mesh",      "2.5", 0),
+        ("within_3",  "2.5", 1),
+        ("within_5",  "2.5", 1),
+        ("within_10", "2.5", 1),
+    ]:
+        rows.append({**seg, "stars_family": "Summary", "metric_name": metric,
+                     "metric_value": value, "metric_flag": flag})
     return pd.DataFrame(rows)

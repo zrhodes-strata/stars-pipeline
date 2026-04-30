@@ -54,3 +54,21 @@ def test_long_to_wide_multi_segment():
     combined = pd.concat([seg1, seg2], ignore_index=True)
     df = long_to_wide(combined)
     assert len(df) == 2
+
+
+def test_long_to_wide_has_mesh_and_band_columns():
+    df = long_to_wide(_make_long_df())
+    for col in ["mesh", "within_3", "within_5", "within_10"]:
+        assert col in df.columns, f"missing column: {col}"
+
+
+def test_long_to_wide_mesh_is_numeric():
+    df = long_to_wide(_make_long_df())
+    assert float(df["mesh"].iloc[0]) == pytest.approx(2.5)
+
+
+def test_long_to_wide_within_bands_are_flags():
+    df = long_to_wide(_make_long_df())
+    assert int(df["within_3"].iloc[0]) == 1
+    assert int(df["within_5"].iloc[0]) == 1
+    assert int(df["within_10"].iloc[0]) == 1

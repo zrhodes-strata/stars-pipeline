@@ -3,10 +3,19 @@ import pandas as pd
 
 _ID_COLS = ["strata_id", "entity_id", "patient_type_rollup", "service_line", "feature_segment"]
 
-_SUMMARY_METRICS = {
-    "is_flagged", "stability_violations", "truthfulness_violations",
+# Summary metrics read from metric_value (numeric: counts and MESH score)
+_VALUE_SUMMARY_METRICS = {
+    "stability_violations", "truthfulness_violations",
     "abundance_violations", "regularity_violations",
+    "mesh",
 }
+
+# Summary metrics read from metric_flag (binary 0/1: overall flag + band membership)
+_FLAG_SUMMARY_METRICS = {
+    "is_flagged", "within_3", "within_5", "within_10",
+}
+
+_SUMMARY_METRICS = _VALUE_SUMMARY_METRICS | _FLAG_SUMMARY_METRICS
 
 
 def long_to_wide(long_df: pd.DataFrame) -> pd.DataFrame:
@@ -38,7 +47,10 @@ def long_to_wide(long_df: pd.DataFrame) -> pd.DataFrame:
                     f"Duplicate metric '{metric}' for segment '{seg_key}'"
                 )
             if metric in _SUMMARY_METRICS:
-                row[metric] = r["metric_flag"] if metric == "is_flagged" else r["metric_value"]
+                if metric in _FLAG_SUMMARY_METRICS:
+                    row[metric] = r["metric_flag"]
+                else:
+                    row[metric] = r["metric_value"]
             else:
                 row[f"{metric}_value"] = r["metric_value"]
                 row[f"{metric}_flag"] = r["metric_flag"]
