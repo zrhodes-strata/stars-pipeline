@@ -157,6 +157,35 @@ def to_long_format(stats_df: pd.DataFrame) -> pd.DataFrame:
                 "metric_flag":  1 if count > 0 else 0,
             })
 
+        # ── MESH + accuracy band rows ─────────────────────────────────────────
+        mesh_val = stat_row.get("mesh")
+        if pd.notna(mesh_val):
+            mesh_float = float(mesh_val)
+            rows.append({
+                **segment,
+                "stars_family": "Summary",
+                "metric_name":  "mesh",
+                "metric_value": str(mesh_float),
+                "metric_flag":  1 if mesh_float > 10.0 else 0,
+            })
+            for band, threshold in [("within_3", 3.0), ("within_5", 5.0), ("within_10", 10.0)]:
+                rows.append({
+                    **segment,
+                    "stars_family": "Summary",
+                    "metric_name":  band,
+                    "metric_value": str(mesh_float),
+                    "metric_flag":  1 if mesh_float <= threshold else 0,
+                })
+        else:
+            for name in ["mesh", "within_3", "within_5", "within_10"]:
+                rows.append({
+                    **segment,
+                    "stars_family": "Summary",
+                    "metric_name":  name,
+                    "metric_value": None,
+                    "metric_flag":  None,
+                })
+
     _OUTPUT_COLS = [
         "strata_id", "entity_id", "patient_type_rollup", "service_line",
         "feature_segment", "stars_family", "metric_name", "metric_value", "metric_flag",

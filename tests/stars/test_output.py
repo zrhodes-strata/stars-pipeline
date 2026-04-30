@@ -49,8 +49,8 @@ def test_long_format_has_correct_columns():
 def test_long_format_has_56_rows_per_segment():
     stats = _make_stats_row()
     result = to_long_format(stats)
-    # 11 primary + 40 intermediates + 5 summary rows
-    assert len(result) == 56
+    # 11 primary + 40 intermediates + 5 original summary + 4 mesh/band summary rows
+    assert len(result) == 60
 
 
 def test_long_format_metric_names_include_new_summaries():
@@ -130,4 +130,74 @@ def test_write_long_csv_creates_file(tmp_path):
     write_long_csv(stats, out)
     assert out.exists()
     df = pd.read_csv(out)
-    assert len(df) == 56
+    assert len(df) == 60
+
+
+def test_long_format_has_60_rows_per_segment():
+    stats = _make_stats_row()
+    result = to_long_format(stats)
+    # 11 primary + 40 intermediates + 5 original summary + 4 mesh/band summary rows
+    assert len(result) == 60
+
+
+def test_mesh_summary_row():
+    stats = _make_stats_row(mesh=2.5)
+    result = to_long_format(stats)
+    row = result[result["metric_name"] == "mesh"].iloc[0]
+    assert row["stars_family"] == "Summary"
+    assert row["metric_value"] == "2.5"
+    assert int(row["metric_flag"]) == 0  # 2.5 <= 10, so NOT outside band → flag=0
+
+
+def test_mesh_flag_outside_band():
+    stats = _make_stats_row(mesh=15.0)
+    result = to_long_format(stats)
+    row = result[result["metric_name"] == "mesh"].iloc[0]
+    assert int(row["metric_flag"]) == 1  # 15.0 > 10 → outside broadest band → flag=1
+
+
+def test_within_3_row():
+    stats = _make_stats_row(mesh=2.5)
+    result = to_long_format(stats)
+    row = result[result["metric_name"] == "within_3"].iloc[0]
+    assert row["stars_family"] == "Summary"
+    assert row["metric_value"] == "2.5"
+    assert int(row["metric_flag"]) == 1  # 2.5 <= 3
+
+
+def test_within_5_row():
+    stats = _make_stats_row(mesh=4.0)
+    result = to_long_format(stats)
+    row = result[result["metric_name"] == "within_5"].iloc[0]
+    assert row["stars_family"] == "Summary"
+    assert row["metric_value"] == "4.0"
+    assert int(row["metric_flag"]) == 1  # 4.0 <= 5
+
+
+def test_within_10_row():
+    stats = _make_stats_row(mesh=8.0)
+    result = to_long_format(stats)
+    row = result[result["metric_name"] == "within_10"].iloc[0]
+    assert row["stars_family"] == "Summary"
+    assert row["metric_value"] == "8.0"
+    assert int(row["metric_flag"]) == 1  # 8.0 <= 10
+
+
+def test_within_bands_outside():
+    stats = _make_stats_row(mesh=7.0)
+    result = to_long_format(stats)
+    assert int(result[result["metric_name"] == "within_3"]["metric_flag"].iloc[0]) == 0
+    assert int(result[result["metric_name"] == "within_5"]["metric_flag"].iloc[0]) == 0
+    assert int(result[result["metric_name"] == "within_10"]["metric_flag"].iloc[0]) == 1
+
+
+def test_mesh_none_produces_null_rows():
+    stats = _make_stats_row(mesh=None)
+    result = to_long_format(stats)
+    import pandas as pd
+    for name in ["mesh", "within_3", "within_5", "within_10"]:
+        row = result[result["metric_name"] == name].iloc[0]
+        assert row["metric_value"] is None or pd.isna(row["metric_value"]), \
+            f"{name} metric_value should be None when mesh is None"
+        assert row["metric_flag"] is None or pd.isna(row["metric_flag"]), \
+            f"{name} metric_flag should be None when mesh is None"
