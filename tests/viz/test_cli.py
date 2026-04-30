@@ -20,7 +20,7 @@ def test_cli_produces_png_files(tmp_path):
     rc = main(["--input", str(csv_path), "--output-dir", str(out_dir)])
     assert rc == 0
     pngs = list(out_dir.glob("*.png"))
-    assert len(pngs) >= 5, f"Expected at least 5 PNG files, got {len(pngs)}: {pngs}"
+    assert len(pngs) >= 8, f"Expected at least 8 PNG files, got {len(pngs)}: {pngs}"
 
 
 def test_cli_missing_input_returns_nonzero(tmp_path):

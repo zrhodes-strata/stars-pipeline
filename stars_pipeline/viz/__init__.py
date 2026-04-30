@@ -6,6 +6,9 @@ from stars_pipeline.viz.plots import (
     plot_severity_and_families,
     plot_threshold_proximity,
     plot_segment_series,
+    plot_mesh_distribution,
+    plot_mesh_by_flag,
+    plot_accuracy_band_by_flag,
 )
 
 __all__ = [
@@ -16,4 +19,7 @@ __all__ = [
     "plot_severity_and_families",
     "plot_threshold_proximity",
     "plot_segment_series",
+    "plot_mesh_distribution",
+    "plot_mesh_by_flag",
+    "plot_accuracy_band_by_flag",
 ]

@@ -31,6 +31,9 @@ def main(argv: list[str] | None = None) -> int:
         plot_flag_rates_by_dim,
         plot_severity_and_families,
         plot_threshold_proximity,
+        plot_mesh_distribution,
+        plot_mesh_by_flag,
+        plot_accuracy_band_by_flag,
     )
 
     parser = _build_parser()
@@ -58,6 +61,9 @@ def main(argv: list[str] | None = None) -> int:
         ("flag_rates_by_dim",     lambda: plot_flag_rates_by_dim(stats_df)),
         ("severity_and_families", lambda: plot_severity_and_families(stats_df)),
         ("threshold_proximity",   lambda: plot_threshold_proximity(stats_df)),
+        ("mesh_distribution",     lambda: plot_mesh_distribution(stats_df)),
+        ("mesh_by_flag",          lambda: plot_mesh_by_flag(stats_df)),
+        ("accuracy_band_by_flag", lambda: plot_accuracy_band_by_flag(stats_df)),
     ]
 
     for name, fn in plots:
