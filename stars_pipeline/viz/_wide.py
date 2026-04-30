@@ -32,6 +32,11 @@ def long_to_wide(long_df: pd.DataFrame) -> pd.DataFrame:
         row: dict = {col: grp[col].iloc[0] for col in id_cols if col in grp.columns}
         for _, r in grp.iterrows():
             metric = r["metric_name"]
+            sentinel = metric if metric in _SUMMARY_METRICS else f"{metric}_value"
+            if sentinel in row:
+                raise ValueError(
+                    f"Duplicate metric '{metric}' for segment '{seg_key}'"
+                )
             if metric in _SUMMARY_METRICS:
                 row[metric] = r["metric_flag"] if metric == "is_flagged" else r["metric_value"]
             else:
