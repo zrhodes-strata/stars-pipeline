@@ -41,8 +41,9 @@ def plot_metric_distributions(
     fig, axes = plt.subplots(
         nrows, ncols,
         figsize=(figsize_per_panel[0] * ncols, figsize_per_panel[1] * nrows),
+        squeeze=False,
     )
-    axes_flat = np.array(axes).flatten()
+    axes_flat = axes.flatten()
 
     for i, col in enumerate(metrics):
         ax = axes_flat[i]
@@ -377,7 +378,8 @@ def plot_threshold_proximity(
         "sparsity_change_value":   ("Sparsity Delta",       cfg.sparsity_delta_threshold,     ">="),
         "low_volume_value":        ("Avg Monthly Volume",   cfg.low_volume_monthly_threshold, "<"),
         "volatility_shift_value":  ("CV Ratio",             cfg.volatility_ratio_threshold,   ">="),
-        "outlier_rate_value":      ("Outlier Rate",         cfg.outlier_rate_threshold,       ">="),
+        "outlier_rate_value":                ("Outlier Rate",         cfg.outlier_rate_threshold,           ">="),
+        "trend_change__slope_change_ratio":  ("Slope Change Ratio",   cfg.slope_change_ratio_threshold,     ">="),
     }
 
     metrics = [(col, label, thr, direction)
@@ -393,8 +395,9 @@ def plot_threshold_proximity(
     fig, axes = plt.subplots(
         nrows, ncols,
         figsize=(figsize_per_panel[0] * ncols, figsize_per_panel[1] * nrows),
+        squeeze=False,
     )
-    axes_flat = np.array(axes).flatten()
+    axes_flat = axes.flatten()
 
     for i, (col, label, thr, direction) in enumerate(metrics):
         ax = axes_flat[i]
