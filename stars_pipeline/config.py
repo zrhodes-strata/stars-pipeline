@@ -116,12 +116,12 @@ class MonitorConfig:
     slope_change_ratio_threshold
         Ratio of the slope change to the training slope magnitude:
         |slope_recent - slope_train| / (|slope_train| + eps).
-        Flag when ratio >= 1.50 (one of three gates in test_trend_change).
+        Flag when ratio >= 0.75 (one of three gates in test_trend_change).
 
     slope_threshold
         Minimum absolute slope magnitude gate in test_trend_change.
         Prevents flagging near-flat series where a ratio is meaningless.
-        Flag requires max(|slope_train|, |slope_recent|) >= 0.05.
+        Flag requires max(|slope_train|, |slope_recent|) >= 0.015.
 
     kpss_alpha
         Significance level for the KPSS stationarity test.
@@ -151,12 +151,22 @@ class MonitorConfig:
         Minimum acceptable average monthly volume in the training window.
         Flag when avg_monthly_volume_train < 3.0.
 
+    low_volume_enabled
+        When False, low_volume never contributes to abundance_violations or
+        is_flagged regardless of the threshold. Default False (matches
+        optimized calibration from PPT pipeline).
+
     Regularity
     ~~~~~~~~~~
     volatility_ratio_threshold
         Coefficient of variation ratio: (sigma/mu)_recent / (sigma/mu)_train.
-        Bidirectional: flag when cv_ratio >= 1.50 (volatility increased)
-        OR cv_ratio <= 1/1.50 (volatility collapsed).
+        Bidirectional: flag when cv_ratio >= 2.75 (volatility increased)
+        OR cv_ratio <= 1/2.75 (volatility collapsed).
+
+    volatility_shift_enabled
+        When False, volatility_shift never contributes to regularity_violations
+        or is_flagged regardless of the threshold. Default False (matches
+        optimized calibration from PPT pipeline).
 
     outlier_z_threshold
         MAD multiplier defining an outlier: a point is an outlier when
@@ -182,8 +192,8 @@ class MonitorConfig:
     ks_d_threshold: float = 0.30
     level_shift_min_cohen_d: float = 1.15
     dw_delta_threshold: float = 1.50
-    slope_change_ratio_threshold: float = 1.50
-    slope_threshold: float = 0.05
+    slope_change_ratio_threshold: float = 0.75
+    slope_threshold: float = 0.015
     kpss_alpha: float = 0.10
     trend_p_value_threshold: float = 0.20
 
@@ -193,9 +203,11 @@ class MonitorConfig:
 
     # ── Abundance ─────────────────────────────────────────────────────────────
     low_volume_monthly_threshold: float = 3.00
+    low_volume_enabled: bool = False
 
     # ── Regularity ────────────────────────────────────────────────────────────
-    volatility_ratio_threshold: float = 1.50
+    volatility_ratio_threshold: float = 2.75
+    volatility_shift_enabled: bool = False
     outlier_z_threshold: float = 3.50
     outlier_rate_threshold: float = 0.40
     acf_divergence_p_threshold: float = 0.05

@@ -189,8 +189,14 @@ _REGULARITY_FLAGS   = [
     "volatility_shift_flag", "outlier_rate_flag", "acf_structure_flag",
 ]
 
+# Tests that are off by default; their flag column is zeroed before counting.
+_OPTIONAL_FLAGS: dict[str, str] = {
+    "low_volume_flag":       "low_volume_enabled",
+    "volatility_shift_flag": "volatility_shift_enabled",
+}
 
-def apply_thresholds(stats_df: pd.DataFrame) -> pd.DataFrame:
+
+def apply_thresholds(stats_df: pd.DataFrame, cfg: MonitorConfig | None = None) -> pd.DataFrame:
     """
     Derive violation counts and is_flagged from pre-computed flag columns.
 
@@ -201,6 +207,9 @@ def apply_thresholds(stats_df: pd.DataFrame) -> pd.DataFrame:
     Args:
         stats_df: DataFrame produced by run_monitoring(), with one row per
                   segment and boolean flag columns for each indicator.
+        cfg:      MonitorConfig used for the run. When provided, tests whose
+                  ``*_enabled`` flag is False are zeroed out before counting
+                  violations. Defaults to MonitorConfig() (canonical thresholds).
 
     Returns:
         The same DataFrame with five additional columns:
@@ -215,7 +224,16 @@ def apply_thresholds(stats_df: pd.DataFrame) -> pd.DataFrame:
             is_flagged (bool)
                 True if any family has at least one violation.
     """
+    if cfg is None:
+        cfg = MonitorConfig()
+
     df = stats_df.copy()
+
+    # Zero out flags for disabled tests so they don't count as violations.
+    for flag_col, enabled_attr in _OPTIONAL_FLAGS.items():
+        if not getattr(cfg, enabled_attr, True):
+            if flag_col in df.columns:
+                df[flag_col] = False
 
     def _count_flags(cols: list[str]) -> pd.Series:
         missing = [c for c in cols if c not in df.columns]

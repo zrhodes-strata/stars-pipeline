@@ -121,7 +121,8 @@ def test_normal_segment_is_not_flagged():
 def test_violation_counts_match_flags():
     """If stability flags ks_distribution and level_shift, stability_violations==2."""
     df = _make_df()
-    stats = run_monitoring(df, _make_run_cfg(), MonitorConfig())
+    cfg = MonitorConfig(volatility_shift_enabled=True)
+    stats = run_monitoring(df, _make_run_cfg(), cfg)
     # Zero out all flag columns first, then manually force two Stability flags
     # and one Regularity flag so the counts are deterministic.
     stats = stats.copy()
@@ -130,7 +131,7 @@ def test_violation_counts_match_flags():
     stats["ks_distribution_flag"] = True
     stats["level_shift_flag"] = True
     stats["volatility_shift_flag"] = True
-    result = apply_thresholds(stats)
+    result = apply_thresholds(stats, cfg=cfg)
     assert int(result["stability_violations"].iloc[0]) == 2
     assert int(result["regularity_violations"].iloc[0]) == 1
     assert int(result["is_flagged"].iloc[0]) == 1

@@ -245,7 +245,7 @@ def main(argv: list[str] | None = None) -> int:
     stats_df = run_monitoring(df, run_cfg, monitor_cfg)
     logger.info("STARS monitoring complete", extra={"segments": len(stats_df)})
 
-    stats_df = apply_thresholds(stats_df)
+    stats_df = apply_thresholds(stats_df, cfg=monitor_cfg)
 
     write_long_csv(stats_df, run_cfg.output_path)
     logger.info("Results written", extra={"output_path": str(run_cfg.output_path)})

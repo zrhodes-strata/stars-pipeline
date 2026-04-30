@@ -18,14 +18,16 @@ def test_monitor_config_canonical_thresholds():
     assert cfg.ks_d_threshold == 0.30
     assert cfg.level_shift_min_cohen_d == 1.15
     assert cfg.dw_delta_threshold == 1.50
-    assert cfg.slope_change_ratio_threshold == 1.50
+    assert cfg.slope_change_ratio_threshold == 0.75
     assert cfg.kpss_alpha == 0.10
     assert cfg.trend_p_value_threshold == 0.20
     assert cfg.coverage_delta_threshold == 0.40
     assert cfg.sparsity_delta_threshold == 0.30
-    assert cfg.slope_threshold == 0.05
+    assert cfg.slope_threshold == 0.015
     assert cfg.low_volume_monthly_threshold == 3.00
-    assert cfg.volatility_ratio_threshold == 1.50
+    assert cfg.low_volume_enabled is False
+    assert cfg.volatility_ratio_threshold == 2.75
+    assert cfg.volatility_shift_enabled is False
     assert cfg.outlier_z_threshold == 3.50
     assert cfg.outlier_rate_threshold == 0.40
     assert cfg.acf_divergence_p_threshold == 0.05
