@@ -568,7 +568,7 @@ def plot_mesh_by_flag(
         non_empty = [(v, g) for v, g in zip([0, 1], groups) if len(g) > 0]
         ax.boxplot(
             [g for _, g in non_empty],
-            labels=[f"{'Pass' if v == 0 else 'Flag'} (n={len(g)})" for v, g in non_empty],
+            tick_labels=[f"{'Pass' if v == 0 else 'Flag'} (n={len(g)})" for v, g in non_empty],
             patch_artist=True,
             boxprops=dict(facecolor="#c6dbef"),
             medianprops=dict(color="black", linewidth=1.5),
