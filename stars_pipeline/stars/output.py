@@ -24,12 +24,16 @@ Intermediate rows (stars_family="Intermediate", metric_flag=NULL):
     Per-indicator intermediate statistics named {metric}__{key}, e.g.:
     ks_distribution__ks_p_value, stationarity__kpss_p_train, acf_structure__acf_train_lag1
 
-Five summary rows per segment (stars_family="Summary"):
+Nine summary rows per segment (stars_family="Summary"):
     is_flagged                metric_value=total violations (int), metric_flag=1/0
     stability_violations      metric_value=count (0-5),            metric_flag=1/0
     truthfulness_violations   metric_value=count (0-2),            metric_flag=1/0
     abundance_violations      metric_value=count (0-1),            metric_flag=1/0
     regularity_violations     metric_value=count (0-3),            metric_flag=1/0
+    mesh                      metric_value=champion MESH (%),      metric_flag=1 if mesh>10 else 0
+    within_3                  metric_value=champion MESH (%),      metric_flag=1 if mesh<=3 else 0
+    within_5                  metric_value=champion MESH (%),      metric_flag=1 if mesh<=5 else 0
+    within_10                 metric_value=champion MESH (%),      metric_flag=1 if mesh<=10 else 0
 """
 from __future__ import annotations
 
@@ -95,7 +99,7 @@ def to_long_format(stats_df: pd.DataFrame) -> pd.DataFrame:
       1. One primary row per STARS indicator (metric_flag set).
       2. One intermediate row per extra statistic per indicator
          (stars_family="Intermediate", metric_flag=NULL).
-      3. Five summary rows (stars_family="Summary").
+      3. Nine summary rows (stars_family="Summary").
 
     Args:
         stats_df: DataFrame produced by monitor.apply_thresholds().
@@ -168,6 +172,7 @@ def to_long_format(stats_df: pd.DataFrame) -> pd.DataFrame:
                 "metric_value": str(mesh_float),
                 "metric_flag":  1 if mesh_float > 10.0 else 0,
             })
+            # metric_value stores the raw MESH score; metric_flag indicates band membership
             for band, threshold in [("within_3", 3.0), ("within_5", 5.0), ("within_10", 10.0)]:
                 rows.append({
                     **segment,

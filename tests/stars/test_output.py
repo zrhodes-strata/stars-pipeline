@@ -133,13 +133,6 @@ def test_write_long_csv_creates_file(tmp_path):
     assert len(df) == 60
 
 
-def test_long_format_has_60_rows_per_segment():
-    stats = _make_stats_row()
-    result = to_long_format(stats)
-    # 11 primary + 40 intermediates + 5 original summary + 4 mesh/band summary rows
-    assert len(result) == 60
-
-
 def test_mesh_summary_row():
     stats = _make_stats_row(mesh=2.5)
     result = to_long_format(stats)
@@ -191,10 +184,19 @@ def test_within_bands_outside():
     assert int(result[result["metric_name"] == "within_10"]["metric_flag"].iloc[0]) == 1
 
 
+def test_mesh_boundary_at_10():
+    """At exactly 10.0: mesh flag=0 (not outside band), within_10 flag=1 (inside band)."""
+    stats = _make_stats_row(mesh=10.0)
+    result = to_long_format(stats)
+    assert int(result[result["metric_name"] == "mesh"]["metric_flag"].iloc[0]) == 0
+    assert int(result[result["metric_name"] == "within_10"]["metric_flag"].iloc[0]) == 1
+    assert int(result[result["metric_name"] == "within_5"]["metric_flag"].iloc[0]) == 0
+    assert int(result[result["metric_name"] == "within_3"]["metric_flag"].iloc[0]) == 0
+
+
 def test_mesh_none_produces_null_rows():
     stats = _make_stats_row(mesh=None)
     result = to_long_format(stats)
-    import pandas as pd
     for name in ["mesh", "within_3", "within_5", "within_10"]:
         row = result[result["metric_name"] == name].iloc[0]
         assert row["metric_value"] is None or pd.isna(row["metric_value"]), \
