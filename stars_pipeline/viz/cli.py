@@ -5,7 +5,6 @@ import sys
 from pathlib import Path
 
 import matplotlib
-import matplotlib.pyplot as plt
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -22,6 +21,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
     import pandas as pd
     from stars_pipeline.viz._wide import long_to_wide
     from stars_pipeline.viz.plots import (

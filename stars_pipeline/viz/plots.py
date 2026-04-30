@@ -289,7 +289,7 @@ def plot_flag_rates_by_dim(
         ax.set_xlabel("Violation Rate")
         ax.set_title(f"STARS Family Rates by {dim}", fontsize=9)
         ax.tick_params(labelsize=7)
-        ax.set_xlim(0, max(lefts.max() * 1.05, 0.05))
+        ax.set_xlim(0, max(float(np.max(lefts, initial=0.0)) * 1.05, 0.05))
         if dim == dims[0]:
             ax.legend(fontsize=7, loc="lower right")
 
