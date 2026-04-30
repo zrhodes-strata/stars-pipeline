@@ -184,6 +184,10 @@ def plot_flag_correlation_grid(
     flag_cols = [c for c in stats_df.columns if c.endswith("_flag") and c != "is_flagged"]
     flag_cols += ["is_flagged"]
     present = [c for c in flag_cols if c in stats_df.columns]
+    if len(present) < 2:
+        fig, ax = plt.subplots(figsize=figsize)
+        ax.text(0.5, 0.5, "No flag columns found", ha="center", va="center")
+        return fig
 
     label_map = {
         "ks_distribution_flag":  "KS Dist.",
@@ -230,11 +234,18 @@ def plot_flag_rates_by_dim(
                 if d in stats_df.columns]
 
     df = stats_df.copy()
-    df["family_stable"]    = (df.get("stability_violations",    pd.Series(0, index=df.index)) > 0).astype(float)
-    df["family_truthful"]  = (df.get("truthfulness_violations", pd.Series(0, index=df.index)) > 0).astype(float)
-    df["family_abundant"]  = (df.get("abundance_violations",    pd.Series(0, index=df.index)) > 0).astype(float)
-    df["family_regular"]   = (df.get("regularity_violations",   pd.Series(0, index=df.index)) > 0).astype(float)
-    df["is_normal"]        = ~df["is_flagged"].astype(bool)
+    def _viol_flag(col: str) -> pd.Series:
+        if col in df.columns:
+            return (df[col] > 0).astype(float)
+        return pd.Series(0.0, index=df.index)
+
+    df["family_stable"]   = _viol_flag("stability_violations")
+    df["family_truthful"] = _viol_flag("truthfulness_violations")
+    df["family_abundant"] = _viol_flag("abundance_violations")
+    df["family_regular"]  = _viol_flag("regularity_violations")
+    if "is_flagged" not in df.columns:
+        df["is_flagged"] = False
+    df["is_normal"] = ~df["is_flagged"].astype(bool)
 
     family_cols = ["family_stable", "family_truthful", "family_abundant", "family_regular"]
     family_labels = {
