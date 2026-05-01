@@ -34,7 +34,18 @@
       "Bash(where python3.exe)",
       "Bash(conda run *)",
       "Bash(conda info *)",
-      "Bash(tee test_output.txt)"
+      "Bash(tee test_output.txt)",
+      "Bash(2>&1)",
+      "Bash(grep -r \"dict\\\\|Dict\\\\|parameter\\\\|overrid\" /c/Users/zrhodes/Repositories/stars-pipeline --include=\"*.py\" ! -path \"*/.venv/*\")",
+      "Bash(grep -r \"dict\" /c/Users/zrhodes/Repositories/stars-pipeline --include=\"*.py\" ! -path \"*/.venv/*\")",
+      "Bash(xargs wc *)",
+      "Bash(xargs -0 wc -l)",
+      "Bash(grep -v \"^[ ]*[0-9]\\\\{1,3\\\\} \")",
+      "Read(//c/Users/zrhodes/Downloads/**)",
+      "Bash(uv add *)",
+      "Bash(grep -E \"\\\\.py$\")",
+      "Bash(dir *)",
+      "Bash(gh pr create --title 'feat: add stars_pipeline/viz module with 7 diagnostic plot functions and CLI' --body ' *)"
     ]
   }
 }
